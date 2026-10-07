@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>(Unofficial) Decent Holograms Portal</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Login -->
+  <main id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <div class="brand"><span class="brand-mark"></span><span>Decent Holograms Portal <span class="brand-sub">(Unofficial)</span></span></div>
+      <p class="muted">Web editor for DecentHolograms holograms and displays. Log in with the password from <code>plugins/HoloPortal/config.yml</code>, or run <code>/holoportal link</code> in game.</p>
+      <label class="field">
+        <span>Password</span>
+        <input id="login-password" type="password" autocomplete="current-password" required autofocus>
+      </label>
+      <p id="login-error" class="error-text" hidden></p>
+      <button class="btn primary wide" type="submit">Log in</button>
+    </form>
+  </main>
+
+  <!-- App -->
+  <div id="app" class="app" hidden>
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <div class="brand" title="(Unofficial) Decent Holograms Portal"><span class="brand-mark"></span><span>Decent Holograms Portal <span class="brand-sub">(Unofficial)</span></span></div>
+        <button id="logout" class="btn ghost small" title="Log out">Log out</button>
+      </div>
+      <div class="segmented" role="tablist" aria-label="What to show">
+        <button class="seg active" data-kind="hologram" role="tab">Holograms <span class="count" id="count-hologram"></span></button>
+        <button class="seg" data-kind="display" role="tab">Displays <span class="count" id="count-display"></span></button>
+      </div>
+      <div class="sidebar-tools">
+        <input id="search" type="search" placeholder="Search" aria-label="Search">
+        <button id="new-btn" class="btn primary small">+ New</button>
+      </div>
+      <div class="sidebar-filters">
+        <select id="world-filter" aria-label="World"><option value="">All worlds</option></select>
+        <select id="sort" aria-label="Sort"><option value="name">A to Z</option></select>
+      </div>
+      <ul id="holo-list" class="holo-list"></ul>
+      <div class="sidebar-foot muted" id="sidebar-foot"></div>
+    </aside>
+
+    <section class="main">
+      <div id="empty" class="empty">
+        <div>
+          <h2>Pick something to edit</h2>
+          <p class="muted">Choose a hologram or display on the left, or create a new one. Changes go live in game as soon as you save.</p>
+          <p class="muted small"><b>Holograms</b> are the classic multi-line kind with pages and click actions. <b>Displays</b> are single text, item or block display entities with scale, rotation, background color and lighting.</p>
+        </div>
+      </div>
+
+      <div id="editor" class="editor" hidden>
+        <header class="editor-head">
+          <div class="title-row">
+            <span id="kind-badge" class="pill"></span>
+            <input id="f-name" class="name-input" spellcheck="false" aria-label="Name">
+            <span id="dirty" class="pill warn" hidden>Unsaved</span>
+            <span id="draft" class="pill" hidden>New</span>
+          </div>
+          <div class="head-actions">
+            <button id="undo-btn" class="icon-btn bordered" title="Undo (Ctrl Z)" aria-label="Undo" disabled>&#8630;</button>
+            <button id="redo-btn" class="icon-btn bordered" title="Redo (Ctrl Y)" aria-label="Redo" disabled>&#8631;</button>
+            <div class="tp">
+              <select id="tp-player" aria-label="Player to teleport"></select>
+              <button id="tp-btn" class="btn small" title="Teleport this player next to it">Teleport</button>
+            </div>
+            <button id="dup-btn" class="btn small">Duplicate</button>
+            <button id="del-btn" class="btn small danger">Delete</button>
+            <button id="revert-btn" class="btn small" disabled>Revert</button>
+            <button id="save-btn" class="btn primary" disabled>Save <kbd>Ctrl S</kbd></button>
+          </div>
+        </header>
+
+        <div id="conflict" class="banner" hidden>
+          <span id="conflict-text">This was changed in game since you opened it.</span>
+          <button id="conflict-load" class="btn small">Load their version</button>
+          <button id="conflict-dismiss" class="btn ghost small">Keep mine</button>
+        </div>
+        <div id="warnings" class="banner warn" hidden></div>
+
+        <nav class="tabs" role="tablist">
+          <button class="tab" data-tab="content" data-for="hologram" role="tab">Lines &amp; actions</button>
+          <button class="tab" data-tab="settings" data-for="hologram" role="tab">Settings</button>
+          <button class="tab" data-tab="dcontent" data-for="display" role="tab">Content &amp; look</button>
+          <button class="tab" data-tab="dposition" data-for="display" role="tab">Position &amp; visibility</button>
+          <button class="tab" data-tab="yaml" role="tab">YAML</button>
+        </nav>
+
+        <!-- Shared format toolbar (moved into whichever text editor is showing) -->
+        <div id="toolbar" class="toolbar" aria-label="Text formatting">
+          <div class="swatches" id="swatches"></div>
+          <div class="tool-group">
+            <button data-code="&amp;l" title="Bold"><b>B</b></button>
+            <button data-code="&amp;o" title="Italic"><i>I</i></button>
+            <button data-code="&amp;n" title="Underline"><u>U</u></button>
+            <button data-code="&amp;m" title="Strikethrough"><s>S</s></button>
+            <button data-code="&amp;k" title="Obfuscated (scrambled)">?!</button>
+            <button data-code="&amp;r" title="Reset formatting">Reset</button>
+          </div>
+          <div class="tool-group">
+            <label class="color-tool" title="Insert a hex color"><input type="color" id="hex-color" value="#55ffff"><span>Hex</span></label>
+            <button id="grad-btn" title="Wrap the selection in a gradient">Gradient</button>
+            <input type="color" id="grad-a" value="#ff5555" title="Gradient start">
+            <input type="color" id="grad-b" value="#5555ff" title="Gradient end">
+          </div>
+          <div class="tool-group">
+            <select id="anim-select" title="Wrap the selection in an animation"><option value="">Animation…</option></select>
+            <select id="ph-select" title="Insert a placeholder">
+              <option value="">Placeholder…</option>
+              <option value="{player}">{player}: viewer's name</option>
+              <option value="%player_name%">%player_name%</option>
+              <option value="%server_online%">%server_online%</option>
+              <option value="%vault_eco_balance_formatted%">%vault_eco_balance_formatted%</option>
+              <option value="%player_world%">%player_world%</option>
+              <option value="%server_time_HH:mm%">%server_time_HH:mm%</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Hologram: lines & actions -->
+        <div class="tab-body" data-body="content" hidden>
+          <div class="content-grid">
+            <div class="content-main">
+              <div class="pages-bar">
+                <div id="page-tabs" class="page-tabs"></div>
+                <div class="page-tools">
+                  <button id="page-left" class="btn ghost small" title="Move page left">&larr;</button>
+                  <button id="page-right" class="btn ghost small" title="Move page right">&rarr;</button>
+                  <button id="page-dup" class="btn ghost small">Duplicate page</button>
+                  <button id="page-del" class="btn ghost small danger-text">Delete page</button>
+                </div>
+              </div>
+              <div class="toolbar-slot" data-slot="hologram"></div>
+              <ol id="lines" class="lines"></ol>
+              <div class="add-line">
+                <button class="btn small" data-add="TEXT">+ Text line</button>
+                <button class="btn small" data-add="ICON">+ Item</button>
+                <button class="btn small" data-add="HEAD">+ Head</button>
+                <button class="btn small" data-add="SMALLHEAD">+ Small head</button>
+                <button class="btn small" data-add="ENTITY">+ Entity</button>
+                <span class="muted small kbd-hint">Enter adds a line · Alt + ↑/↓ moves it · drag ⋮⋮ to reorder</span>
+              </div>
+
+              <section class="card actions-card">
+                <div class="card-head">
+                  <h3>Click actions <span class="muted">(this page)</span></h3>
+                  <p class="muted small">What happens when a player clicks the hologram. Actions run in order.</p>
+                </div>
+                <div id="actions"></div>
+              </section>
+            </div>
+
+            <aside class="preview-wrap">
+              <div class="preview-head"><span>Preview</span><span class="muted small">approximate</span></div>
+              <div id="preview" class="preview"></div>
+              <p class="muted small preview-note">Placeholders and animations show as written. {player} shows as "Steve".</p>
+            </aside>
+          </div>
+        </div>
+
+        <!-- Hologram: settings -->
+        <div class="tab-body" data-body="settings" hidden>
+          <div class="settings-grid">
+            <section class="card">
+              <h3>Location</h3>
+              <div class="loc-slot" data-loc="hologram"></div>
+            </section>
+
+            <section class="card">
+              <h3>Facing</h3>
+              <p class="muted small">Which way flat parts (item and head lines) face. Text always faces the player.</p>
+              <div class="facing-slot" data-facing-slot="hologram"></div>
+            </section>
+
+            <section class="card">
+              <h3>Visibility</h3>
+              <label class="check"><input id="f-enabled" type="checkbox"> Enabled <span class="muted small">(disabled holograms are hidden from everyone)</span></label>
+              <label class="field"><span>Permission <em class="muted">optional</em></span><input id="f-permission" placeholder="e.g. smp.vip" spellcheck="false"></label>
+              <p class="muted small">Only players with this permission see the hologram.</p>
+              <div class="row two">
+                <label class="field"><span>Display range <em class="muted">blocks</em></span><input id="f-displayRange" type="number" min="1" max="512"></label>
+                <label class="field"><span>Update range <em class="muted">blocks</em></span><input id="f-updateRange" type="number" min="1" max="512"></label>
+              </div>
+              <label class="field"><span>Update interval <em class="muted">ticks, 20 = 1 second</em></span><input id="f-updateInterval" type="number" min="1"></label>
+              <p class="muted small">How often placeholders refresh for players inside the update range.</p>
+            </section>
+
+            <section class="card">
+              <h3>Behaviour</h3>
+              <label class="check"><input id="f-downOrigin" type="checkbox"> Down origin <span class="muted small">(the location is the bottom of the hologram, so it grows upward)</span></label>
+              <div id="holo-flags" class="flags"></div>
+              <p class="muted small">Turning off placeholders, animations or updates on holograms that don't need them saves server work.</p>
+            </section>
+          </div>
+        </div>
+
+        <!-- Display: content & look -->
+        <div class="tab-body" data-body="dcontent" hidden>
+          <div class="content-grid">
+            <div class="content-main" id="display-main"></div>
+            <aside class="preview-wrap">
+              <div class="preview-head"><span>Preview</span><span class="muted small">approximate</span></div>
+              <div id="dpreview" class="preview"></div>
+              <p class="muted small preview-note" id="dpreview-note"></p>
+            </aside>
+          </div>
+        </div>
+
+        <!-- Display: position & visibility -->
+        <div class="tab-body" data-body="dposition" hidden>
+          <div class="settings-grid">
+            <section class="card">
+              <h3>Location</h3>
+              <div class="loc-slot" data-loc="display"></div>
+            </section>
+            <section class="card">
+              <h3>Facing</h3>
+              <p class="muted small">The direction the display faces. Only visible when billboard is FIXED, VERTICAL or HORIZONTAL (CENTER always turns to the viewer).</p>
+              <div class="facing-slot" data-facing-slot="display"></div>
+              <label class="field"><span>Tilt (pitch) <em class="muted">-90 to 90</em></span>
+                <div class="row inline"><input id="d-pitch-range" type="range" min="-90" max="90" step="1"><input id="d-pitch" type="number" min="-90" max="90" class="narrow"></div>
+              </label>
+            </section>
+            <section class="card">
+              <h3>Visibility</h3>
+              <label class="check"><input id="d-enabled" type="checkbox"> Enabled <span class="muted small">(disabled displays are hidden from everyone)</span></label>
+              <label class="field"><span>Display range <em class="muted">blocks</em></span><input id="d-range" type="number" min="1" max="1024"></label>
+              <label class="field"><span>Update interval <em class="muted">ticks, 20 = 1 second</em></span><input id="d-interval" type="number" min="1"></label>
+              <p class="muted small">How often placeholders and animations refresh.</p>
+            </section>
+          </div>
+        </div>
+
+        <!-- YAML -->
+        <div class="tab-body" data-body="yaml" hidden>
+          <div class="card yaml-card">
+            <div class="card-head row-between">
+              <div>
+                <h3>Raw file</h3>
+                <p class="muted small" id="yaml-help"></p>
+              </div>
+              <div class="row inline">
+                <button id="yaml-reload" class="btn small">Reload</button>
+                <button id="yaml-save" class="btn primary small">Save YAML</button>
+              </div>
+            </div>
+            <textarea id="yaml" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- New dialog -->
+  <dialog id="new-dialog">
+    <form method="dialog" id="new-form" class="dialog-body">
+      <h3>Create</h3>
+      <div class="kind-picker" id="new-kind">
+        <label><input type="radio" name="kind" value="hologram" checked><span><b>Hologram</b><small>Lines, pages, click actions</small></span></label>
+        <label><input type="radio" name="kind" value="TEXT"><span><b>Text display</b><small>Scalable text with background</small></span></label>
+        <label><input type="radio" name="kind" value="ITEM"><span><b>Item display</b><small>A floating, rotatable item</small></span></label>
+        <label><input type="radio" name="kind" value="BLOCK"><span><b>Block display</b><small>A block at any size or angle</small></span></label>
+      </div>
+      <label class="field" id="template-field"><span>Start from</span><select id="new-template"></select></label>
+      <label class="field"><span>Name</span><input id="new-name" required pattern="[a-zA-Z0-9_\-]+" placeholder="spawn_welcome" spellcheck="false"></label>
+      <p class="muted small">Letters, numbers, _ and -. Used in <code>/dh</code> commands.</p>
+      <label class="field"><span>Place it at</span><select id="new-at"></select></label>
+      <div class="dialog-actions">
+        <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn primary" value="ok">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

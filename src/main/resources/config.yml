@@ -1,0 +1,23 @@
+# HoloPortal: a web editor for DecentHolograms.
+#
+# Open it at http://<server LAN IP>:<port>. Log in with the password below, or run
+# /holoportal link in game for a one-time login link.
+#
+# Keep this on your LAN. Don't forward the port on your router: anyone with the password
+# can run console commands through hologram click actions.
+
+# Port for the web editor.
+port: 8790
+
+# Address to listen on. 0.0.0.0 = every network interface. 127.0.0.1 = this machine only.
+bind: 0.0.0.0
+
+# The address players' browsers use to reach the editor, used for /holoportal links.
+# Leave empty to use this machine's LAN IP.
+public-url: ""
+
+# Login password. Generated on first start. Change it here, then /holoportal reload.
+password: ""
+
+# How long a login lasts, in hours.
+session-hours: 12

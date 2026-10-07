@@ -1,0 +1,19 @@
+name: HoloPortal
+version: '${version}'
+main: dev.smp.holoportal.HoloPortalPlugin
+api-version: '1.21'
+description: (Unofficial) Decent Holograms Portal, a web editor for DecentHolograms holograms and displays.
+authors: [GabeBrPierce]
+website: https://github.com/GabeBrPierce/decent-holograms-portal
+depend: [DecentHolograms]
+
+commands:
+  holoportal:
+    description: Open the hologram web editor.
+    usage: /holoportal [link|reload]
+    aliases: [hp]
+    permission: holoportal.admin
+
+permissions:
+  holoportal.admin:
+    default: op
