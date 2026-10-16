@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "dev.smp"
-version = "1.0.0"
+version = "1.1.0"
 
 // Pass -PmcVersion=26.3 to build against a different Paper API (setup.ps1 does this).
 val mcVersion = (findProperty("mcVersion") as String?) ?: "26.2"
@@ -25,6 +25,7 @@ java {
 }
 
 tasks.processResources {
+    inputs.property("version", project.version) // re-expand plugin.yml when the version changes
     filesMatching("plugin.yml") {
         expand("version" to project.version)
     }

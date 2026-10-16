@@ -1,6 +1,6 @@
 # (Unofficial) Decent Holograms Portal
 
-A web editor for [DecentHolograms](https://github.com/DecentSoftware-eu/DecentHolograms). Edit every hologram and display setting in your browser instead of typing `/dh` commands, with a live preview, and see your changes in game the moment you save.
+A web editor for [DecentHolograms](https://github.com/DecentSoftware-eu/DecentHolograms). Edit every hologram, display and animation in your browser instead of typing `/dh` commands, with a live animated preview, and see your changes in game the moment you save.
 
 It runs inside your Minecraft server as a small plugin (**HoloPortal**). There's nothing else to install or host.
 
@@ -13,6 +13,7 @@ It runs inside your Minecraft server as a small plugin (**HoloPortal**). There's
 **Holograms**
 - Text, item, head, small head and entity lines, with a live preview
 - A formatting toolbar: color codes, bold and friends, hex colors, gradients, animations and PlaceholderAPI placeholders
+- Animations play in the preview exactly as they do in game, and lines with a broken or misused animation tag get a hint
 - Pages, and click actions for left, right and shift clicks (message, command, console command, teleport, sound, next/previous page, permission checks...)
 - Per-line height, offsets, facing, permission and flags
 - Location, facing, display/update range, update interval, permission, flags and down origin
@@ -24,6 +25,13 @@ It runs inside your Minecraft server as a small plugin (**HoloPortal**). There's
 - Leave any attribute on the Minecraft default with one click
 
 ![Editing a text display](docs/display.png)
+
+**Animations**
+- Pick an animation from a list where every option plays live on your own text, set its colors, and it's wrapped in the right `<#ANIM:…>` tag for you
+- Create custom animations: frames with the formatting toolbar, speed and hold timing, presets (color cycle, blink, sparkle, arrows, gradient shine) and a live preview with a frame strip
+- See which holograms and displays use each animation, copy its tag, and get warned before a rename breaks them
+
+![Editing a custom animation](docs/animation.png)
 
 **Editing**
 - Undo and redo (Ctrl+Z / Ctrl+Y), Ctrl+S to save
@@ -76,6 +84,7 @@ session-hours: 12     # how long a login lasts
 ## How it works
 
 - **Holograms:** saving writes the hologram's file in DecentHolograms' own format and has DecentHolograms load it again (the same path `/dh reload` uses), so anything DecentHolograms can store, the editor can set. If DecentHolograms rejects the file, the previous version is restored.
+- **Animations:** custom animations are files in `plugins/DecentHolograms/animations/` (`speed`, `pause` and `steps`). Saving writes the file and reloads DecentHolograms' animations. The preview uses a port of DecentHolograms' animation code, including its quirks: the built-in typewriter, wave, burn and scroll drop color codes inside the tag, and a custom animation's last frame only shows when its pause is at least its speed.
 - **Displays:** DecentHolograms doesn't offer a plugin API for displays yet, so the editor writes the display's file in `plugins/DecentHolograms/displays/` and asks DecentHolograms to reload its displays. Every display briefly respawns when you save one. Warnings DecentHolograms logs about the display (for example a skipped attribute) are shown in the editor, and the old file is restored if the display doesn't load.
 - The web server is the JDK's built-in HTTP server and the editor is plain HTML, CSS and JavaScript, so the plugin has no extra dependencies.
 

@@ -26,16 +26,18 @@ async function api(method, path, body) {
 const S = {
   meta: null,
   kind: 'hologram',                 // which list the sidebar shows
-  lists: { hologram: [], display: [] },
+  lists: { hologram: [], display: [], animation: [] },
   edit: null,                       // { kind, current, saved, original, fingerprint }
   page: 0,                          // hologram page being edited
   openMore: new Set(),              // "page:line" keys with the details row open
   lastText: null,                   // { input, set } last text input used, for the format toolbar
   hist: [], hi: 0, lastPush: 0,     // undo history (JSON snapshots)
-  tabs: { hologram: 'content', display: 'dcontent' },
+  tabs: { hologram: 'content', display: 'dcontent', animation: 'aframes' },
 };
 const C = () => S.edit.current;
 const isHolo = () => S.edit && S.edit.kind === 'hologram';
+const isAnim = () => S.edit && S.edit.kind === 'animation';
+const KINDS = ['hologram', 'display', 'animation'];
 
 const TYPES = [['TEXT', 'Text'], ['ICON', 'Item'], ['HEAD', 'Head'], ['SMALLHEAD', 'Small head'], ['ENTITY', 'Entity']];
 const PREFIX = { ICON: '#ICON:', HEAD: '#HEAD:', SMALLHEAD: '#SMALLHEAD:', ENTITY: '#ENTITY:' };
@@ -61,7 +63,7 @@ const MC_COLORS = {
 const clone = (o) => JSON.parse(JSON.stringify(o));
 const isDirty = () => !!S.edit && (S.edit.original === null || JSON.stringify(C()) !== S.edit.saved);
 const page = () => C().pages[S.page];
-const apiBase = (kind) => (kind === 'display' ? 'displays' : 'holograms');
+const apiBase = (kind) => ({ display: 'displays', animation: 'animations' }[kind] || 'holograms');
 
 // ------------------------------------------------------------------ boot / login
 
@@ -105,7 +107,7 @@ async function showApp() {
   buildStatic();
   await refreshLists();
   const [kind, name] = decodeURIComponent(location.hash.slice(1)).split('/');
-  if (name && (kind === 'hologram' || kind === 'display')) {
+  if (name && KINDS.includes(kind)) {
     setKind(kind);
     openItem(kind, name);
   }
@@ -122,9 +124,10 @@ async function refreshMeta() {
 // ------------------------------------------------------------------ sidebar
 
 async function refreshLists() {
-  const [h, d] = await Promise.all([api('GET', 'holograms'), api('GET', 'displays').catch(() => [])]);
+  const [h, d, a] = await Promise.all([api('GET', 'holograms'), api('GET', 'displays').catch(() => []), api('GET', 'animations').catch(() => [])]);
   S.lists.hologram = h;
   S.lists.display = d;
+  S.lists.animation = a;
   fillSidebarFilters();
   renderList();
 }
@@ -156,10 +159,12 @@ function renderList() {
   ul.innerHTML = '';
   $('#count-hologram').textContent = S.lists.hologram.length || '';
   $('#count-display').textContent = S.lists.display.length || '';
+  $('#count-animation').textContent = S.lists.animation.length || '';
+  $('.sidebar-filters').hidden = S.kind === 'animation';
 
   let items = S.lists[S.kind].filter((h) =>
-    (!q || h.name.toLowerCase().includes(q) || (h.preview || '').toLowerCase().includes(q)) && (!world || h.world === world));
-  if (sort.startsWith('near:')) {
+    (!q || h.name.toLowerCase().includes(q) || (h.preview || '').toLowerCase().includes(q)) && (!world || S.kind === 'animation' || h.world === world));
+  if (sort.startsWith('near:') && S.kind !== 'animation') {
     const p = S.meta.players.find((x) => x.name === sort.slice(5));
     if (p) {
       const dist = (h) => (h.world === p.world ? Math.hypot(h.x - p.x, h.y - p.y, h.z - p.z) : Infinity);
@@ -177,19 +182,24 @@ function renderList() {
     if (S.kind === 'display' && h.loaded === false) name.append(el('span', 'pill warn', 'not loaded'));
     li.append(name);
     const dist = h._dist !== undefined ? (h._dist === Infinity ? ' · other world' : ` · ${Math.round(h._dist)} m away`) : '';
-    li.append(el('div', 'holo-meta', h.unloaded
+    if (S.kind === 'animation' && h.loaded === false) name.append(el('span', 'pill warn', 'not loaded'));
+    li.append(el('div', 'holo-meta', S.kind === 'animation'
+      ? `${h.frames} frame${h.frames === 1 ? '' : 's'} · ${loopText(h)}`
+      : h.unloaded
       ? `${h.world} isn't loaded`
       : `${h.world} · ${fmt(h.x)}, ${fmt(h.y)}, ${fmt(h.z)}` + (S.kind === 'hologram' ? ` · ${h.lines} line${h.lines === 1 ? '' : 's'}${h.pages > 1 ? ` · ${h.pages} pages` : ''}` : '') + dist));
     if (h.preview) {
       const p = el('div', 'holo-preview');
-      p.append(h.preview.startsWith('Item: ') || h.preview.startsWith('Block: ') ? document.createTextNode(h.preview) : renderMc(h.preview));
+      if (h.preview.startsWith('Item: ') || h.preview.startsWith('Block: ')) p.textContent = h.preview;
+      else if (S.kind === 'animation') mcLive(p, `<#ANIM:${h.name}>Text</#ANIM>`);
+      else mcLive(p, h.preview);
       li.append(p);
     }
     if (!h.unloaded) li.addEventListener('click', () => openItem(S.kind, h.name));
     ul.append(li);
   }
   if (!items.length) {
-    const none = S.lists[S.kind].length ? 'No matches.' : (S.kind === 'display'
+    const none = S.lists[S.kind].length ? 'No matches.' : S.kind === 'animation' ? 'No custom animations yet. Click + New and pick Custom animation.' : (S.kind === 'display'
       ? (S.meta.display && S.meta.display.available ? 'No displays yet. Click + New and pick a display type.' : 'This DecentHolograms build has no displays.')
       : 'No holograms yet.');
     ul.append(el('li', 'muted small list-empty', none));
@@ -215,8 +225,8 @@ async function openItem(kind, name) {
 function load(kind, data, original, { keepTab = false } = {}) {
   const fingerprint = data.fingerprint || null;
   const prevKind = S.edit && S.edit.kind;
-  const current = kind === 'hologram' ? normalizeHologram(data) : normalizeDisplay(data);
-  S.edit = { kind, current, saved: JSON.stringify(current), original, fingerprint };
+  const current = kind === 'hologram' ? normalizeHologram(data) : kind === 'display' ? normalizeDisplay(data) : normalizeAnimation(data);
+  S.edit = { kind, current, saved: JSON.stringify(current), original, fingerprint, usedIn: data.usedIn || [] };
   if (kind === 'hologram') S.page = original === null || prevKind !== 'hologram' ? 0 : Math.min(S.page, current.pages.length - 1);
   S.openMore.clear();
   S.hist = [S.edit.saved]; S.hi = 0;
@@ -267,6 +277,10 @@ function normalizeDisplay(d) {
   };
 }
 
+function normalizeAnimation(a) {
+  return { name: a.name, speed: a.speed ?? 2, pause: a.pause ?? 0, steps: [...(a.steps || ['{text}'])] };
+}
+
 function forSave() {
   const out = clone(C());
   if (isHolo()) for (const p of out.pages) for (const l of p.lines) delete l.type;
@@ -278,14 +292,17 @@ async function save() {
   const btn = $('#save-btn');
   btn.disabled = true;
   const { kind, original, fingerprint } = S.edit;
+  if (kind === 'animation' && original && original !== C().name && S.edit.usedIn.length
+    && !confirm(`${S.edit.usedIn.length} hologram(s) or display(s) use <#ANIM:${original}>. After renaming, they'll show the tag as plain text until you update them. Rename anyway?`)) {
+    updateDirty();
+    return;
+  }
   try {
-    const body = kind === 'hologram'
-      ? { original, fingerprint, hologram: forSave() }
-      : { original, fingerprint, display: forSave() };
-    const res = await api('POST', apiBase(kind), body);
+    const res = await api('POST', apiBase(kind), { original, fingerprint, [kind]: forSave() });
+    if (kind === 'animation') await refreshMeta(); // previews everywhere use the new frames
     load(kind, res, res.name, { keepTab: true });
     showWarnings(res.warnings);
-    toast('Saved. It\'s live in game.');
+    toast(kind === 'animation' ? 'Saved. DecentHolograms reloaded its animations.' : 'Saved. It\'s live in game.');
     refreshLists();
   } catch (e) {
     toast(e.message, true);
@@ -330,6 +347,7 @@ $('#del-btn').addEventListener('click', async () => {
   if (!confirm(`Delete "${original}"? This removes it from the world and deletes its file.`)) return;
   try {
     await api('DELETE', `${apiBase(kind)}/${encodeURIComponent(original)}`);
+    if (kind === 'animation') await refreshMeta();
     toast(`Deleted ${original}.`);
     closeEditor();
     refreshLists();
@@ -352,10 +370,10 @@ $('#dup-btn').addEventListener('click', () => {
   let name = copy.name + '_copy', n = 2;
   while (names.includes(name)) name = `${copy.name}_copy${n++}`;
   copy.name = name;
-  if (kind === 'hologram') copy.z = round(copy.z + 2); else copy.location.z = round(copy.location.z + 2);
+  if (kind === 'hologram') copy.z = round(copy.z + 2); else if (kind === 'display') copy.location.z = round(copy.location.z + 2);
   S.edit.saved = null;
   load(kind, copy, null);
-  toast('Copy made 2 blocks south. Save to create it.');
+  toast(kind === 'animation' ? 'Copy made. Save to create it.' : 'Copy made 2 blocks south. Save to create it.');
 });
 
 $('#tp-btn').addEventListener('click', async () => {
@@ -475,30 +493,48 @@ function tl(content) { return { content, height: S.meta.defaults.heights.TEXT, f
 function il(item) { return { content: '#ICON: ' + item, height: S.meta.defaults.heights.ICON, flags: [], permission: '', offsetX: 0, offsetZ: 0 }; }
 
 function newKind() { return ($('#new-kind input:checked') || {}).value || 'hologram'; }
+const ANIM_TEMPLATES = {
+  blank: { label: 'Blank', speed: 2, pause: 0, steps: () => ['{text}'] },
+  cycle: { label: 'Color cycle', speed: 4, pause: 0, steps: () => ['&c', '&6', '&e', '&a', '&b', '&d'].map((c) => c + '{text}') },
+  blink: { label: 'Blink', speed: 10, pause: 0, steps: () => ['&f{text}', '&8{text}'] },
+  sparkle: { label: 'Sparkle', speed: 5, pause: 0, steps: () => ['&e✦ &f{text} &e✦', '&6✧ &f{text} &6✧', '&e⋆ &f{text} &e⋆', '&6✧ &f{text} &6✧'] },
+  arrows: { label: 'Arrows', speed: 4, pause: 0, steps: () => ['&a»  &f{text}  &a«', '&a »&f{text}&a« ', '&a  »&f{text}&a«  ', '&a »&f{text}&a« '] },
+  shine: { label: 'Gradient shine', speed: 2, pause: 30, steps: () => shineFrames('#55FFFF', '#FFFFFF', 12) },
+};
 function updateNewDialog() {
-  $('#template-field').hidden = newKind() !== 'hologram';
+  const kind = newKind();
+  $('#template-field').hidden = kind !== 'hologram' && kind !== 'animation';
+  $('#at-field').hidden = kind === 'animation';
+  const tpl = $('#new-template');
+  const want = kind === 'animation' ? 'anim' : 'holo';
+  if (tpl.dataset.for !== want) {
+    tpl.innerHTML = '';
+    for (const [k, v] of Object.entries(kind === 'animation' ? ANIM_TEMPLATES : HOLO_TEMPLATES)) tpl.append(new Option(v.label, k));
+    tpl.dataset.for = want;
+  }
 }
 $('#new-kind').addEventListener('change', updateNewDialog);
 
-$('#new-btn').addEventListener('click', async () => {
+$('#new-btn').addEventListener('click', () => openNew());
+
+async function openNew(prefer) {
   await refreshMeta();
   const sel = $('#new-at');
   sel.innerHTML = '';
   for (const p of S.meta.players) sel.append(new Option(`${p.name}'s position (${p.world})`, 'player:' + p.name));
   for (const w of S.meta.worlds) sel.append(new Option(`${w}, near 0, 100, 0`, 'world:' + w));
-  const tpl = $('#new-template');
-  tpl.innerHTML = '';
-  for (const [k, v] of Object.entries(HOLO_TEMPLATES)) tpl.append(new Option(v.label, k));
+  $('#new-template').dataset.for = '';
   const displays = S.meta.display && S.meta.display.available;
+  const preferred = prefer || (S.kind === 'animation' ? 'animation' : S.kind === 'display' && displays ? 'TEXT' : 'hologram');
   $$('#new-kind input').forEach((r) => {
-    r.disabled = r.value !== 'hologram' && !displays;
-    r.checked = S.kind === 'display' && displays ? r.value === 'TEXT' : r.value === 'hologram';
+    r.disabled = !['hologram', 'animation'].includes(r.value) && !displays;
+    r.checked = r.value === preferred;
   });
   updateNewDialog();
   $('#new-name').value = '';
   $('#new-dialog').showModal();
   $('#new-name').focus();
-});
+}
 
 $('#new-form').addEventListener('submit', (e) => {
   // method="dialog" closes the dialog after this; Cancel uses formnovalidate and value="cancel".
@@ -510,7 +546,10 @@ $('#new-form').addEventListener('submit', (e) => {
   const p = at.startsWith('player:') ? S.meta.players.find((x) => x.name === at.slice(7)) : null;
   const world = p ? p.world : (at.startsWith('world:') ? at.slice(6) : S.meta.worlds[0]);
   const facing = p ? facingFromYaw(p.yaw) : 0;
-  if (kind === 'hologram') {
+  if (kind === 'animation') {
+    const tp = ANIM_TEMPLATES[$('#new-template').value] || ANIM_TEMPLATES.blank;
+    load('animation', { name, speed: tp.speed, pause: tp.pause, steps: tp.steps() }, null);
+  } else if (kind === 'hologram') {
     const d = S.meta.defaults;
     load('hologram', {
       name, world, x: p ? p.x : 0.5, y: p ? round(p.y + 2.5) : 100, z: p ? p.z : 0.5,
@@ -545,9 +584,6 @@ function buildStatic() {
     b.dataset.code = '&' + code;
     sw.append(b);
   }
-  const anim = $('#anim-select');
-  anim.length = 1;
-  for (const a of S.meta.animations) anim.append(new Option(a, a));
 
   const hf = $('#holo-flags');
   hf.innerHTML = '';
@@ -587,7 +623,7 @@ function fillPlayerSelects() {
 function showTab(name) {
   const kind = S.edit ? S.edit.kind : 'hologram';
   const tab = $(`.tab[data-tab="${name}"]`);
-  if (!tab || (tab.dataset.for && tab.dataset.for !== kind)) name = kind === 'hologram' ? 'content' : 'dcontent';
+  if (!tab || (tab.dataset.for && tab.dataset.for !== kind)) name = { hologram: 'content', display: 'dcontent', animation: 'aframes' }[kind];
   S.tabs[kind] = name;
   $$('.tab').forEach((x) => {
     x.hidden = !!x.dataset.for && x.dataset.for !== kind;
@@ -604,14 +640,16 @@ function placeToolbar() {
   const tb = $('#toolbar');
   const slot = !S.edit ? null
     : isHolo() ? $('.toolbar-slot[data-slot="hologram"]')
-      : (C().type === 'TEXT' ? $('#display-main .toolbar-slot') : null);
+      : isAnim() ? $('#anim-main .toolbar-slot')
+        : (C().type === 'TEXT' ? $('#display-main .toolbar-slot') : null);
   if (slot) { slot.append(tb); tb.hidden = false; } else { tb.hidden = true; }
 }
 
 function renderEditor() {
   const kind = S.edit.kind;
   $('#f-name').value = C().name;
-  $('#kind-badge').textContent = kind === 'hologram' ? 'Hologram' : `${cap(C().type)} display`;
+  $('#kind-badge').textContent = kind === 'hologram' ? 'Hologram' : kind === 'animation' ? 'Animation' : `${cap(C().type)} display`;
+  $('.tp').hidden = kind === 'animation';
   $('#draft').hidden = S.edit.original !== null;
   $('#dup-btn').disabled = S.edit.original === null;
   $('#del-btn').textContent = S.edit.original === null ? 'Discard' : 'Delete';
@@ -621,9 +659,11 @@ function renderEditor() {
     renderActions();
     renderHoloSettings();
     renderPreview();
-  } else {
+  } else if (kind === 'display') {
     renderDisplay();
     renderDisplayPosition();
+  } else {
+    renderAnimation();
   }
   placeToolbar();
   updateDirty();
@@ -641,12 +681,16 @@ function updateDirty() {
 
 /** Call after any edit. Typing passes coalesce so one word isn't twenty undo steps. */
 function changed({ preview = true, coalesce = false } = {}) {
-  if (preview) { if (isHolo()) renderPreview(); else renderDisplayPreview(); }
+  if (preview) { if (isHolo()) renderPreview(); else if (isAnim()) renderAnimPreview(); else renderDisplayPreview(); }
   pushHistory(coalesce);
   updateDirty();
 }
 
-$('#f-name').addEventListener('input', (e) => { C().name = e.target.value.trim(); changed({ preview: false, coalesce: true }); });
+$('#f-name').addEventListener('input', (e) => {
+  C().name = e.target.value.trim();
+  if (isAnim()) renderUsage();
+  changed({ preview: false, coalesce: true });
+});
 
 // ------------------------------------------------------------------ shared: location & facing controls
 
@@ -968,6 +1012,7 @@ function rememberText(input, li, set) {
 }
 
 function lineHint(line) {
+  if (line.type === 'TEXT') return animHint(line.content);
   if (line.type === 'HEAD' || line.type === 'SMALLHEAD') return '{player} shows each viewer their own head.';
   if (line.type === 'ICON' && line.content && !S.meta.materials.includes(valueOf(line).split(/[\s:(!{]/)[0].toUpperCase())) return 'Not a known item name. It will show as stone.';
   if (line.type === 'ENTITY' && !S.meta.entities.includes(valueOf(line).split(/\s/)[0].toUpperCase())) return 'Not a known entity type.';
@@ -1102,13 +1147,6 @@ $('#toolbar').addEventListener('click', (e) => {
 });
 $('#hex-color').addEventListener('change', (e) => insertCode('&' + e.target.value.toUpperCase()));
 $('#grad-btn').addEventListener('click', () => insertCode(`<${$('#grad-a').value.toUpperCase()}>`, `</${$('#grad-b').value.toUpperCase()}>`));
-$('#anim-select').addEventListener('change', (e) => {
-  const a = e.target.value;
-  e.target.value = '';
-  if (!a) return;
-  const args = { wave: ':&f,&b', burn: ':&f,&c', colors: '' }[a] ?? '';
-  insertCode(`<#ANIM:${a}${args}>`, '</#ANIM>');
-});
 $('#ph-select').addEventListener('change', (e) => {
   const v = e.target.value;
   e.target.value = '';
@@ -1223,7 +1261,7 @@ function renderPreview() {
     row.style.minHeight = px + 'px';
     if (line.type === 'TEXT') {
       const tx = el('span', 'mc-text');
-      tx.append(renderMc(line.content));
+      mcLive(tx, line.content);
       row.append(tx);
     } else {
       row.append(itemPreview(line, px));
@@ -1642,7 +1680,7 @@ function renderDisplayPreview() {
     panel.classList.toggle('shadowed', !!A('text-shadow'));
     for (const line of d.lines) {
       const ln = el('div', 'd-line');
-      ln.append(line ? renderMc(line) : document.createTextNode(' '));
+      if (line) mcLive(ln, line); else ln.textContent = '\u00a0';
       panel.append(ln);
     }
     thing.append(panel);
@@ -1664,14 +1702,454 @@ function renderDisplayPreview() {
 
 const rgba = (v) => `rgba(${v.red | 0}, ${v.green | 0}, ${v.blue | 0}, ${((v.alpha ?? 255) / 255).toFixed(3)})`;
 
+// ------------------------------------------------------------------ animations: engine
+// A port of DecentHolograms' text animations, so previews play exactly as they do in game.
+
+const ANIM_RE = /[<{]#?ANIM:(\w+)(:\S+)?[}>](.*?)[<{]\/#?ANIM[}>]/g;
+const PREVIEW_ANIM = '__portal_preview';
+const BUILTIN_INFO = {
+  typewriter: ['Types the text out letter by letter, then holds it.', []],
+  wave: ['A bright band sweeps across the text.', ['Base color', 'Highlight color'], ['&f', '&b']],
+  burn: ['The text changes color left to right, like a burning fuse.', ['Color before', 'Color after'], ['&7', '&c']],
+  scroll: ['Scrolls the text sideways like a marquee.', []],
+  colors: ['Cycles the whole text through colors. Leave the list empty for a rainbow.', []],
+};
+const tickNow = () => Math.floor(performance.now() / 50); // 20 ticks per second, like the server
+const stripLegacy = (s) => s.replace(/[&§][0-9a-fk-orA-FK-OR]/g, '');
+const specialFmt = (s) => (s.match(/[&§][k-oK-O]/g) || []).join('');
+
+/** DecentHolograms' Animation.getCurrentStep. */
+function stepOf(step, maxSteps, speed, pause) {
+  if (maxSteps <= 0) return 0;
+  speed = Math.max(1, speed | 0);
+  const actual = Math.floor(step / speed);
+  const actualPause = pause <= 0 ? 0 : Math.floor(pause / speed);
+  return Math.min(actual % (maxSteps + actualPause), maxSteps);
+}
+
+const BUILTIN_ANIM = {
+  typewriter(t, step, a, d) {
+    const st = stripLegacy(t);
+    return specialFmt(t) + st.slice(0, stepOf(step, st.length, d.speed, d.pause));
+  },
+  wave(t, step, a, d) {
+    if (!a || !a[0]) return null; // DH errors without colors
+    const sp = specialFmt(t), st = stripLegacy(t), len = st.length, size = Math.floor(len / 4);
+    const cur = stepOf(step, len + size, d.speed, d.pause);
+    const i1 = cur > size ? cur - size : 0;
+    const i2 = cur < size ? size - (size - cur) : cur;
+    const c1 = a[0], c2 = a.length === 1 ? '&f' : a[1];
+    const start = i1 !== 0 ? st.slice(0, i1) : '';
+    const mid = len > i2 ? st.slice(i1, i2) : st.slice(i1);
+    const end = len > i2 ? st.slice(i2) : '';
+    return c1 + sp + start + c2 + sp + mid + c1 + sp + end;
+  },
+  burn(t, step, a, d) {
+    if (!a || a.length < 2) return null;
+    const sp = specialFmt(t), st = stripLegacy(t);
+    const cur = stepOf(step, st.length, d.speed, d.pause);
+    return a[1] + sp + st.slice(0, cur) + a[0] + sp + st.slice(cur);
+  },
+  scroll(t, step, a, d) {
+    const sp = specialFmt(t), st = stripLegacy(t), len = st.length, size = Math.floor(len / 3) * 2;
+    const cur = stepOf(step, len, d.speed, d.pause);
+    const i2 = cur + size;
+    if (i2 > len) return sp + st.slice(cur) + ' ' + sp + st.slice(0, i2 - len);
+    return sp + st.slice(cur, i2);
+  },
+  colors(t, step, a, d) {
+    const colors = a && a.length && a[0] ? a : ['&c', '&6', '&e', '&a', '&b', '&d'];
+    return colors[stepOf(step, colors.length, d.speed, d.pause)] + t;
+  },
+};
+
+function animDefs() {
+  const m = {};
+  for (const d of (S.meta && S.meta.animationDefs) || []) m[d.name] = d;
+  if (S.animOverride) m[PREVIEW_ANIM] = S.animOverride;
+  return m;
+}
+
+function runAnim(def, text, step, args) {
+  if (def.builtin) return (BUILTIN_ANIM[def.name] || (() => null))(text, step, args, def);
+  const steps = def.steps || [];
+  if (!steps.length) return '';
+  return steps[stepOf(step, steps.length - 1, def.speed, def.pause)].split('{text}').join(text);
+}
+
+/** DecentHolograms' AnimationManager.parseTextAnimations: unknown or broken tags stay as written. */
+function applyAnimations(text, step) {
+  const defs = animDefs();
+  let out = text.replace(ANIM_RE, (all, name, args, body) => {
+    const d = defs[name];
+    if (!d) return all;
+    const r = runAnim(d, body, step, args ? args.slice(1).split(',') : null);
+    return r === null ? all : r;
+  });
+  if (out.includes('&u')) out = out.split('&u').join(runAnim({ builtin: true, name: 'colors', speed: 4, pause: 0 }, '', step, null));
+  return out;
+}
+
+const hasAnim = (t) => t.includes('&u') || /[<{]#?ANIM:\w+/.test(t);
+
+// Elements showing animated text; redrawn every tick while they're on the page.
+const LIVE = new Set();
+const TICKERS = new Set();
+function mcLive(target, text) {
+  const entry = { el: target, text, last: null };
+  drawLive(entry);
+  if (hasAnim(text)) LIVE.add(entry);
+}
+function drawLive(e) {
+  const out = hasAnim(e.text) ? applyAnimations(e.text, tickNow()) : e.text;
+  if (out === e.last) return;
+  e.last = out;
+  e.el.textContent = '';
+  e.el.append(renderMc(out));
+}
+setInterval(() => {
+  for (const e of LIVE) {
+    if (!e.el.isConnected) LIVE.delete(e); else drawLive(e);
+  }
+  for (const f of TICKERS) f();
+}, 50);
+
+/** One loop of a custom animation, in ticks (DH never shows the last frame unless pause >= speed). */
+function loopTicks(a) {
+  const n = (a.steps ? a.steps.length : a.frames) || 0;
+  const speed = Math.max(1, a.speed | 0);
+  return (Math.max(0, n - 1) + (a.pause <= 0 ? 0 : Math.floor(a.pause / speed))) * speed;
+}
+function loopText(a) {
+  const t = loopTicks(a);
+  return t ? `loops every ${(t / 20).toFixed(t % 20 ? 2 : 0)}s` : 'static';
+}
+
+/** Gradient frames where the bright end slides across the text. */
+function shineFrames(a, b, n) {
+  const A = hexRgb(a.slice(1)), B = hexRgb(b.slice(1));
+  const mix = (x, y, t) => '#' + x.map((v, k) => Math.round(v + (y[k] - v) * t).toString(16).padStart(2, '0')).join('').toUpperCase();
+  const frames = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    frames.push(`<${mix(A, B, t)}>{text}</${mix(B, A, t)}>`);
+  }
+  return frames;
+}
+
+/** Problems with animation tags in a line, as a hint. */
+function animHint(content) {
+  const defs = animDefs();
+  ANIM_RE.lastIndex = 0;
+  let m, found = false;
+  while ((m = ANIM_RE.exec(content))) {
+    found = true;
+    const [, name, args, body] = m;
+    if (!defs[name]) return `There's no animation called "${name}", so players see the tag as text.`;
+    if (['typewriter', 'wave', 'burn', 'scroll'].includes(name) && /[&§][0-9a-f]|&#|<#[0-9a-f]|\{#/i.test(body)) {
+      return `${name} drops colors inside the tag. Put the color before the tag instead, e.g. &e<#ANIM:${name}>text</#ANIM>.`;
+    }
+    const parts = args ? args.slice(1).split(',') : [];
+    if (name === 'wave' && !parts[0]) return 'wave needs colors, e.g. <#ANIM:wave:&f,&b>text</#ANIM>.';
+    if (name === 'burn' && parts.length < 2) return 'burn needs two colors, e.g. <#ANIM:burn:&7,&c>text</#ANIM>.';
+  }
+  if (!found && /[<{]#?ANIM:/.test(content)) return 'An animation tag isn\'t closed. Add </#ANIM> after the text.';
+  return '';
+}
+
+// ------------------------------------------------------------------ animations: picker dialog
+
+const COLOR_CODES = Object.keys(MC_COLORS).map((c) => '&' + c);
+let pick = { name: 'typewriter', args: {} };
+
+$('#anim-btn').addEventListener('click', () => {
+  const target = S.lastText;
+  if (!target || !document.body.contains(target.input)) { toast('Click into a text line first.', true); return; }
+  const { input } = target;
+  const sel = input.value.slice(input.selectionStart ?? 0, input.selectionEnd ?? 0);
+  pick.sample = stripTags(sel) || 'Sample text';
+  pick.selection = { start: input.selectionStart, end: input.selectionEnd };
+  renderAnimPicker();
+  $('#anim-dialog').showModal();
+});
+
+const stripTags = (s) => s.replace(ANIM_RE, '$3');
+
+function pickTag(name, args) {
+  const info = BUILTIN_INFO[name];
+  let a = '';
+  if (info && info[2]) a = ':' + (args[name] || info[2]).join(',');
+  if (name === 'colors' && args.colors && args.colors.length) a = ':' + args.colors.join(',');
+  return `<#ANIM:${name}${a}>`;
+}
+
+function renderAnimPicker() {
+  const list = $('#anim-choices');
+  list.innerHTML = '';
+  const defs = (S.meta.animationDefs || []);
+  for (const d of defs) {
+    const lab = el('label', 'anim-choice' + (pick.name === d.name ? ' active' : ''));
+    const r = document.createElement('input');
+    r.type = 'radio'; r.name = 'anim'; r.value = d.name; r.checked = pick.name === d.name;
+    r.addEventListener('change', () => { pick.name = d.name; renderAnimPicker(); });
+    const body = el('span', 'anim-choice-body');
+    const title = el('b', null, d.name);
+    if (!d.builtin) title.append(el('span', 'pill', 'custom'));
+    body.append(title, el('small', 'muted', d.builtin ? BUILTIN_INFO[d.name][0] : `${(d.steps || []).length} frames · ${loopText(d)}`));
+    const prev = el('span', 'anim-choice-preview');
+    mcLive(prev, `${pickTag(d.name, pick.args)}${pick.sample}</#ANIM>`);
+    lab.append(r, body, prev);
+    list.append(lab);
+  }
+  const opts = $('#anim-options');
+  opts.innerHTML = '';
+  const info = BUILTIN_INFO[pick.name];
+  if (info && info[2]) {
+    const vals = pick.args[pick.name] || [...info[2]];
+    pick.args[pick.name] = vals;
+    info[1].forEach((label, i) => {
+      const f = el('label', 'field inline-field');
+      f.append(el('span', null, label));
+      f.append(colorCodeSelect(vals[i], (v) => { vals[i] = v; renderAnimPicker(); }));
+      opts.append(f);
+    });
+  } else if (pick.name === 'colors') {
+    const f = el('label', 'field');
+    f.append(el('span', null, 'Colors (comma-separated codes)'));
+    const i = document.createElement('input');
+    i.placeholder = '&c,&6,&e,&a,&b,&d';
+    i.value = (pick.args.colors || []).join(',');
+    i.addEventListener('change', () => { pick.args.colors = i.value.split(',').map((x) => x.trim()).filter(Boolean); renderAnimPicker(); });
+    f.append(i);
+    opts.append(f);
+  }
+}
+
+function colorCodeSelect(value, onChange) {
+  const s = document.createElement('select');
+  const names = { '&0': 'Black', '&1': 'Dark blue', '&2': 'Dark green', '&3': 'Dark aqua', '&4': 'Dark red', '&5': 'Purple', '&6': 'Gold', '&7': 'Gray', '&8': 'Dark gray', '&9': 'Blue', '&a': 'Green', '&b': 'Aqua', '&c': 'Red', '&d': 'Pink', '&e': 'Yellow', '&f': 'White' };
+  for (const c of COLOR_CODES) {
+    const o = new Option(`${names[c]} (${c})`, c);
+    o.style.color = MC_COLORS[c[1]];
+    s.append(o);
+  }
+  s.value = value;
+  s.addEventListener('change', () => onChange(s.value));
+  return s;
+}
+
+$('#anim-form').addEventListener('submit', (e) => {
+  const v = e.submitter && e.submitter.value;
+  if (v === 'custom') {
+    setTimeout(() => openNew('animation'), 0);
+    return;
+  }
+  if (v !== 'ok') return;
+  const { input } = S.lastText;
+  input.setSelectionRange(pick.selection.start, pick.selection.end);
+  const empty = pick.selection.start === pick.selection.end;
+  insertCode(pickTag(pick.name, pick.args) + (empty ? 'Text' : ''), '</#ANIM>');
+});
+
+// ------------------------------------------------------------------ animations: editor
+
+S.animSample = 'Hello world';
+
+function renderAnimation() {
+  const a = C();
+  const main = $('#anim-main');
+  document.body.append($('#toolbar'));
+  main.innerHTML = '';
+
+  // Timing
+  const timing = el('section', 'card');
+  timing.append(el('h3', null, 'Timing'));
+  const speedRow = numberSlider('Speed', 'Ticks each frame shows (20 ticks = 1 second). Lower is faster.', a.speed, 1, 40, (v) => { a.speed = Math.max(1, Math.round(v)); timingNote(); });
+  const pauseRow = numberSlider('Hold last frame', 'Extra ticks the last frame stays before the loop restarts.', a.pause, 0, 200, (v) => { a.pause = Math.max(0, Math.round(v)); timingNote(); });
+  const note = el('div', 'timing-note');
+  const timingNote = () => {
+    note.innerHTML = '';
+    if (a.steps.length > 1 && a.pause < a.speed) {
+      note.className = 'timing-note warn';
+      note.append(document.createTextNode('DecentHolograms skips the last frame unless Hold is at least Speed. '));
+      const fix = el('button', 'btn small', 'Show every frame evenly');
+      fix.type = 'button';
+      fix.addEventListener('click', () => { a.pause = a.speed; renderAnimation(); changed(); });
+      note.append(fix);
+    } else {
+      note.className = 'timing-note muted small';
+      note.textContent = a.steps.length > 1 ? `One loop takes ${(loopTicks(a) / 20).toFixed(2)} seconds.` : 'One frame: the text never changes.';
+    }
+    $('#anim-loop').textContent = loopText(a);
+  };
+  timing.append(speedRow, pauseRow, note);
+  main.append(timing);
+
+  // Frames
+  const card = el('section', 'card');
+  const head = el('div', 'row-between');
+  head.append(el('h3', null, 'Frames'));
+  const sample = el('label', 'field inline-field');
+  sample.append(el('span', null, 'Preview text'));
+  const si = document.createElement('input');
+  si.value = S.animSample;
+  si.title = 'What {text} becomes in the preview';
+  si.addEventListener('input', () => { S.animSample = si.value; renderAnimPreview(); });
+  sample.append(si);
+  head.append(sample);
+  card.append(head);
+  card.append(el('p', 'muted small', '{text} is replaced by whatever is inside the tag. A frame without {text} ignores it, so you can also animate fixed text.'));
+  card.append(el('div', 'toolbar-slot'));
+  const ins = el('button', 'btn small', 'Insert {text}');
+  ins.type = 'button';
+  ins.addEventListener('mousedown', (e) => e.preventDefault());
+  ins.addEventListener('click', () => insertCode('{text}'));
+
+  const ol = el('ol', 'lines');
+  ol.id = 'aframes';
+  const renderFrames = () => {
+    ol.innerHTML = '';
+    a.steps.forEach((text, i) => {
+      const li = el('li', 'line');
+      li.dataset.index = i;
+      const row = el('div', 'dline-main');
+      const input = document.createElement('input');
+      input.className = 'line-content';
+      input.spellcheck = false;
+      input.value = text;
+      input.placeholder = '&b{text}';
+      const set = (v) => { a.steps[i] = v; changed({ coalesce: true }); };
+      input.addEventListener('input', () => set(input.value));
+      rememberText(input, li, set);
+      lineKeys(input, i, a.steps, () => { renderFrames(); timingNote(); }, '#aframes', () => a.steps[i]);
+      const btns = el('div', 'line-buttons');
+      btns.append(
+        iconBtn('⧉', 'Duplicate frame', false, () => { a.steps.splice(i + 1, 0, text); renderFrames(); timingNote(); changed(); }),
+        iconBtn('✕', 'Delete frame', a.steps.length === 1, () => { a.steps.splice(i, 1); renderFrames(); timingNote(); changed(); }, 'danger'),
+      );
+      const g = grip(i);
+      g.title = `Frame ${i + 1}. Drag to reorder.`;
+      row.append(g, input, btns);
+      li.append(row);
+      ol.append(li);
+    });
+    sortable(ol, a.steps, () => { renderFrames(); changed(); });
+  };
+  renderFrames();
+  card.append(ol);
+  const addRow = el('div', 'add-line');
+  const add = el('button', 'btn small', '+ Frame');
+  add.type = 'button';
+  add.addEventListener('click', () => { a.steps.push(a.steps[a.steps.length - 1] ?? '{text}'); renderFrames(); timingNote(); changed(); focusLine('#aframes', a.steps.length - 1); });
+  addRow.append(add, ins, el('span', 'muted small kbd-hint', 'Enter adds a frame · Alt + ↑/↓ moves it · drag ⋮⋮ to reorder'));
+  card.append(addRow);
+  main.append(card);
+
+  // Presets
+  const presets = el('section', 'card');
+  presets.append(el('h3', null, 'Start from a preset'));
+  presets.append(el('p', 'muted small', 'Replaces the frames and timing. You can undo it.'));
+  const pr = el('div', 'row inline');
+  const ps = document.createElement('select');
+  for (const [k, v] of Object.entries(ANIM_TEMPLATES)) if (k !== 'blank') ps.append(new Option(v.label, k));
+  const apply = el('button', 'btn small', 'Apply');
+  apply.type = 'button';
+  apply.addEventListener('click', () => {
+    const tp = ANIM_TEMPLATES[ps.value];
+    a.steps = tp.steps(); a.speed = tp.speed; a.pause = tp.pause;
+    renderAnimation(); changed();
+  });
+  pr.append(ps, apply);
+  presets.append(pr);
+  main.append(presets);
+
+  timingNote();
+  renderAnimPreview();
+  renderUsage();
+}
+
+function numberSlider(label, help, value, min, max, set) {
+  const wrap = el('div', 'num-slider');
+  const top = el('div', 'row-between');
+  top.append(el('span', 'attr-name', label));
+  const r = el('div', 'row inline');
+  const range = document.createElement('input');
+  range.type = 'range'; range.min = min; range.max = max; range.value = value;
+  const n = document.createElement('input');
+  n.type = 'number'; n.min = min; n.className = 'narrow'; n.value = value;
+  range.addEventListener('input', () => { n.value = range.value; set(+range.value); changed({ coalesce: true }); });
+  n.addEventListener('input', () => { const v = parseFloat(n.value); if (!isNaN(v)) { range.value = v; set(v); changed({ coalesce: true }); } });
+  r.append(range, n);
+  wrap.append(top, el('div', 'muted small', help), r);
+  return wrap;
+}
+
+function renderAnimPreview() {
+  if (!isAnim()) return;
+  const a = C();
+  S.animOverride = { name: PREVIEW_ANIM, builtin: false, speed: a.speed, pause: a.pause, steps: a.steps };
+  const box = $('#apreview');
+  box.innerHTML = '';
+  const line = el('span', 'mc-text big');
+  mcLive(line, `<#ANIM:${PREVIEW_ANIM}>${S.animSample}</#ANIM>`);
+  box.append(line);
+
+  const strip = $('#aframes-strip');
+  strip.innerHTML = '';
+  const cells = a.steps.map((f, i) => {
+    const c = el('div', 'frame-cell');
+    c.append(el('span', 'frame-no', String(i + 1)));
+    const t = el('span', 'mc-text');
+    t.append(renderMc(f.split('{text}').join(S.animSample)));
+    c.append(t);
+    strip.append(c);
+    return c;
+  });
+  TICKERS.clear();
+  TICKERS.add(() => {
+    if (!isAnim() || !strip.isConnected) { TICKERS.clear(); return; }
+    const cur = stepOf(tickNow(), a.steps.length - 1, a.speed, a.pause);
+    cells.forEach((c, i) => c.classList.toggle('on', i === cur));
+  });
+  $('#anim-loop').textContent = loopText(a);
+}
+
+function renderUsage() {
+  const name = C().name || 'name';
+  $('#anim-snippet').textContent = `<#ANIM:${name}>Your text</#ANIM>`;
+  const used = $('#anim-used');
+  used.innerHTML = '';
+  if (S.edit.original === null) { used.append(el('p', 'muted small', 'Save it to use it in game.')); return; }
+  if (!S.edit.usedIn.length) { used.append(el('p', 'muted small', 'Not used in any hologram or display yet.')); return; }
+  used.append(el('p', 'muted small', 'Used in:'));
+  const ul = el('ul', 'used-list');
+  for (const u of S.edit.usedIn) {
+    const li = el('li');
+    const b = el('button', 'linkish', `${u.name}`);
+    b.type = 'button';
+    b.prepend(el('span', 'type-pill', u.kind === 'hologram' ? 'HOLO' : 'DISPLAY'));
+    b.addEventListener('click', () => openItem(u.kind, u.name));
+    li.append(b);
+    ul.append(li);
+  }
+  used.append(ul);
+}
+
+$('#anim-copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('#anim-snippet').textContent); toast('Copied.'); }
+  catch { toast('Couldn\'t copy. Select the text and copy it yourself.', true); }
+});
+
 // ------------------------------------------------------------------ YAML
 
 async function loadYaml() {
   const ta = $('#yaml');
   const kind = S.edit ? S.edit.kind : 'hologram';
-  $('#yaml-help').textContent = kind === 'hologram'
-    ? 'The hologram\'s file in plugins/DecentHolograms/holograms. Saving here replaces the whole file. If DecentHolograms rejects it, the old file is kept.'
-    : 'The display\'s file in plugins/DecentHolograms/displays. Saving here replaces the whole file and reloads displays. If DecentHolograms rejects it, the old file is kept.';
+  $('#yaml-help').textContent = {
+    hologram: 'The hologram\'s file in plugins/DecentHolograms/holograms. Saving here replaces the whole file. If DecentHolograms rejects it, the old file is kept.',
+    display: 'The display\'s file in plugins/DecentHolograms/displays. Saving here replaces the whole file and reloads displays. If DecentHolograms rejects it, the old file is kept.',
+    animation: 'The animation\'s file in plugins/DecentHolograms/animations: speed, pause and steps (the frames). Saving here replaces the whole file and reloads animations.',
+  }[kind];
   if (!S.edit || S.edit.original === null) { ta.value = '# Save it first to edit its file.'; ta.disabled = true; return; }
   if (isDirty()) toast('The YAML shows the saved version. Save or revert your changes in the other tabs first.', true);
   ta.disabled = false;
@@ -1696,12 +2174,11 @@ $('#yaml-save').addEventListener('click', saveYaml);
 
 // ------------------------------------------------------------------ Minecraft text rendering
 
-/** Renders Minecraft/DecentHolograms formatting: &codes, &#hex, <#hex>, {#hex}, gradients, placeholders, animations. */
+/** Renders Minecraft/DecentHolograms formatting: &codes, &#hex, <#hex>, {#hex}, gradients and placeholders. */
 function renderMc(text) {
   const frag = document.createDocumentFragment();
   const reset = () => ({ color: '#FFFFFF', b: false, i: false, u: false, s: false, k: false });
   let style = reset();
-  let anim = false;
 
   text = text.replace(/<#([0-9a-f]{6})>(.*?)<\/#([0-9a-f]{6})>/gi, (_, a, body, b) => gradient(body, a, b));
   text = text.replace(/<RAINBOW\d*>(.*?)<\/RAINBOW>/gi, (_, body) => rainbow(body));
@@ -1716,12 +2193,11 @@ function renderMc(text) {
     const deco = [style.u && 'underline', style.s && 'line-through'].filter(Boolean).join(' ');
     if (deco) span.style.textDecoration = deco;
     if (style.k) span.classList.add('mc-k');
-    if (anim) span.classList.add('mc-anim');
     if (cls) span.classList.add(cls);
     frag.append(span);
   };
 
-  const re = /&#([0-9a-f]{6})|\{#([0-9a-f]{6})\}|<#([0-9a-f]{6})>|[&§]([0-9a-fk-or])|(<#?ANIM:[^>]*>)|(<\/#?ANIM>)|(%[A-Za-z0-9_:.\-]+%|\{player\})/gi;
+  const re = /&#([0-9a-f]{6})|\{#([0-9a-f]{6})\}|<#([0-9a-f]{6})>|[&§]([0-9a-fk-or])|(%[A-Za-z0-9_:.\-]+%|\{player\}|\{text\})/gi;
   let last = 0, m;
   while ((m = re.exec(text))) {
     push(text.slice(last, m.index));
@@ -1739,9 +2215,7 @@ function renderMc(text) {
       else if (c === 'r') style = reset();
       continue;
     }
-    if (m[5]) { anim = true; continue; }
-    if (m[6]) { anim = false; continue; }
-    if (m[7]) push(m[7] === '{player}' ? 'Steve' : m[7], m[7] === '{player}' ? null : 'mc-ph');
+    if (m[5]) push(m[5] === '{player}' ? 'Steve' : m[5], m[5] === '{player}' ? null : 'mc-ph');
   }
   push(text.slice(last));
   return frag;

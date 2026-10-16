@@ -37,6 +37,7 @@ final class WebServer {
     private final Auth auth;
     private final HologramService holograms;
     private final DisplayEditor displays;
+    private final AnimationEditor animations = new AnimationEditor();
     private HttpServer server;
     private ExecutorService pool;
 
@@ -126,6 +127,7 @@ final class WebServer {
                 if (read) {
                     JsonObject meta = holograms.meta();
                     meta.add("display", holograms.sync(displays::meta));
+                    meta.add("animationDefs", holograms.sync(animations::definitions));
                     json(ex, 200, meta);
                     return;
                 }
@@ -180,6 +182,34 @@ final class WebServer {
                     if (method.equals("PUT")) {
                         JsonObject b = body(ex);
                         json(ex, 200, withWarnings(holograms.sync(() -> displays.saveYaml(name, nullableStr(b, "fingerprint"), str(b, "yaml")))));
+                        return;
+                    }
+                }
+            }
+            case "animations" -> {
+                if (name == null && read) { json(ex, 200, holograms.sync(animations::list)); return; }
+                if (name == null && method.equals("POST")) {
+                    JsonObject b = body(ex);
+                    if (!b.has("animation") || !b.get("animation").isJsonObject()) throw new ApiException(400, "Missing animation.");
+                    json(ex, 200, holograms.sync(() -> animations.save(nullableStr(b, "original"), nullableStr(b, "fingerprint"), b.getAsJsonObject("animation"))));
+                    return;
+                }
+                if (name != null && parts.length == 2 && read) { json(ex, 200, holograms.sync(() -> animations.get(name))); return; }
+                if (name != null && parts.length == 2 && method.equals("DELETE")) {
+                    holograms.sync(() -> { animations.delete(name); return null; });
+                    json(ex, 200, ok());
+                    return;
+                }
+                if (name != null && parts.length == 3 && parts[2].equals("yaml")) {
+                    if (read) {
+                        JsonObject o = new JsonObject();
+                        o.addProperty("yaml", holograms.sync(() -> animations.yaml(name)));
+                        json(ex, 200, o);
+                        return;
+                    }
+                    if (method.equals("PUT")) {
+                        JsonObject b = body(ex);
+                        json(ex, 200, holograms.sync(() -> animations.saveYaml(name, nullableStr(b, "fingerprint"), str(b, "yaml"))));
                         return;
                     }
                 }

@@ -32,6 +32,7 @@
       <div class="segmented" role="tablist" aria-label="What to show">
         <button class="seg active" data-kind="hologram" role="tab">Holograms <span class="count" id="count-hologram"></span></button>
         <button class="seg" data-kind="display" role="tab">Displays <span class="count" id="count-display"></span></button>
+        <button class="seg" data-kind="animation" role="tab">Animations <span class="count" id="count-animation"></span></button>
       </div>
       <div class="sidebar-tools">
         <input id="search" type="search" placeholder="Search" aria-label="Search">
@@ -50,7 +51,7 @@
         <div>
           <h2>Pick something to edit</h2>
           <p class="muted">Choose a hologram or display on the left, or create a new one. Changes go live in game as soon as you save.</p>
-          <p class="muted small"><b>Holograms</b> are the classic multi-line kind with pages and click actions. <b>Displays</b> are single text, item or block display entities with scale, rotation, background color and lighting.</p>
+          <p class="muted small"><b>Holograms</b> are the classic multi-line kind with pages and click actions. <b>Displays</b> are single text, item or block display entities with scale, rotation, background color and lighting. <b>Animations</b> are your own text animations, used in any line with <code>&lt;#ANIM:name&gt;text&lt;/#ANIM&gt;</code>.</p>
         </div>
       </div>
 
@@ -88,6 +89,7 @@
           <button class="tab" data-tab="settings" data-for="hologram" role="tab">Settings</button>
           <button class="tab" data-tab="dcontent" data-for="display" role="tab">Content &amp; look</button>
           <button class="tab" data-tab="dposition" data-for="display" role="tab">Position &amp; visibility</button>
+          <button class="tab" data-tab="aframes" data-for="animation" role="tab">Frames</button>
           <button class="tab" data-tab="yaml" role="tab">YAML</button>
         </nav>
 
@@ -109,7 +111,7 @@
             <input type="color" id="grad-b" value="#5555ff" title="Gradient end">
           </div>
           <div class="tool-group">
-            <select id="anim-select" title="Wrap the selection in an animation"><option value="">Animation…</option></select>
+            <button id="anim-btn" type="button" title="Wrap the selection in an animation">✨ Animation…</button>
             <select id="ph-select" title="Insert a placeholder">
               <option value="">Placeholder…</option>
               <option value="{player}">{player}: viewer's name</option>
@@ -158,7 +160,7 @@
             <aside class="preview-wrap">
               <div class="preview-head"><span>Preview</span><span class="muted small">approximate</span></div>
               <div id="preview" class="preview"></div>
-              <p class="muted small preview-note">Placeholders and animations show as written. {player} shows as "Steve".</p>
+              <p class="muted small preview-note">Animations play the way they will in game. Placeholders show as written; {player} shows as "Steve".</p>
             </aside>
           </div>
         </div>
@@ -236,6 +238,24 @@
           </div>
         </div>
 
+        <!-- Animation: frames -->
+        <div class="tab-body" data-body="aframes" hidden>
+          <div class="content-grid">
+            <div class="content-main" id="anim-main"></div>
+            <aside class="preview-wrap">
+              <div class="preview-head"><span>Preview</span><span class="muted small" id="anim-loop"></span></div>
+              <div id="apreview" class="preview anim-preview"></div>
+              <div id="aframes-strip" class="frame-strip"></div>
+              <div class="card usage-card">
+                <h3>Use it</h3>
+                <p class="muted small">Wrap any text in a hologram or text display line:</p>
+                <div class="row inline"><code id="anim-snippet" class="snippet"></code><button id="anim-copy" class="btn small" type="button">Copy</button></div>
+                <div id="anim-used"></div>
+              </div>
+            </aside>
+          </div>
+        </div>
+
         <!-- YAML -->
         <div class="tab-body" data-body="yaml" hidden>
           <div class="card yaml-card">
@@ -265,14 +285,31 @@
         <label><input type="radio" name="kind" value="TEXT"><span><b>Text display</b><small>Scalable text with background</small></span></label>
         <label><input type="radio" name="kind" value="ITEM"><span><b>Item display</b><small>A floating, rotatable item</small></span></label>
         <label><input type="radio" name="kind" value="BLOCK"><span><b>Block display</b><small>A block at any size or angle</small></span></label>
+        <label class="wide"><input type="radio" name="kind" value="animation"><span><b>Custom animation</b><small>Your own frames, usable in any hologram or display line</small></span></label>
       </div>
       <label class="field" id="template-field"><span>Start from</span><select id="new-template"></select></label>
       <label class="field"><span>Name</span><input id="new-name" required pattern="[a-zA-Z0-9_\-]+" placeholder="spawn_welcome" spellcheck="false"></label>
       <p class="muted small">Letters, numbers, _ and -. Used in <code>/dh</code> commands.</p>
-      <label class="field"><span>Place it at</span><select id="new-at"></select></label>
+      <label class="field" id="at-field"><span>Place it at</span><select id="new-at"></select></label>
       <div class="dialog-actions">
         <button class="btn" value="cancel" formnovalidate>Cancel</button>
         <button class="btn primary" value="ok">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Animation picker -->
+  <dialog id="anim-dialog" class="wide-dialog">
+    <form method="dialog" id="anim-form" class="dialog-body">
+      <h3>Animate text</h3>
+      <p class="muted small">Wraps the selected text (or inserts a new tag) in <code>&lt;#ANIM:…&gt;…&lt;/#ANIM&gt;</code>. The previews play the way they will in game.</p>
+      <div id="anim-choices" class="anim-choices"></div>
+      <div id="anim-options" class="anim-options"></div>
+      <div class="dialog-actions">
+        <button class="btn ghost" value="custom" type="submit" formnovalidate>Make a custom animation…</button>
+        <span class="spacer"></span>
+        <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn primary" value="ok">Insert</button>
       </div>
     </form>
   </dialog>
