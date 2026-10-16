@@ -21,3 +21,12 @@ password: ""
 
 # How long a login lasts, in hours.
 session-hours: 12
+
+heads:
+  # Show the minecraft-heads.com library in the head picker. The server downloads each category
+  # once and caches it in plugins/HoloPortal/heads for a week. Set to false to never contact the site.
+  library: true
+  # Optional: use minecraft-heads.com API v2 instead of the public lists. Register an app on
+  # minecraft-heads.com to get an app UUID. Without a license (api-key) v2 only returns 100 demo heads.
+  app-uuid: ""
+  api-key: ""

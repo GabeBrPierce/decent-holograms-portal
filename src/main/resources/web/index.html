@@ -106,9 +106,7 @@
           </div>
           <div class="tool-group">
             <label class="color-tool" title="Insert a hex color"><input type="color" id="hex-color" value="#55ffff"><span>Hex</span></label>
-            <button id="grad-btn" title="Wrap the selection in a gradient">Gradient</button>
-            <input type="color" id="grad-a" value="#ff5555" title="Gradient start">
-            <input type="color" id="grad-b" value="#5555ff" title="Gradient end">
+            <button id="grad-btn" type="button" title="Color the selection with a gradient or rainbow" class="grad-btn">🌈 Gradient…</button>
           </div>
           <div class="tool-group">
             <button id="anim-btn" type="button" title="Wrap the selection in an animation">✨ Animation…</button>
@@ -294,6 +292,48 @@
       <div class="dialog-actions">
         <button class="btn" value="cancel" formnovalidate>Cancel</button>
         <button class="btn primary" value="ok">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Asset picker -->
+  <dialog id="picker" class="wide-dialog picker">
+    <form method="dialog" class="dialog-body">
+      <div class="row-between picker-head">
+        <h3 id="picker-title">Pick</h3>
+        <div class="segmented small" id="picker-tabs"></div>
+      </div>
+      <div id="picker-body"></div>
+      <div class="dialog-actions">
+        <span id="picker-credit" class="muted small"></span>
+        <span class="spacer"></span>
+        <button class="btn" value="cancel" formnovalidate>Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Gradient builder -->
+  <dialog id="grad-dialog" class="wide-dialog">
+    <form method="dialog" id="grad-form" class="dialog-body">
+      <h3>Gradient &amp; rainbow</h3>
+      <p class="muted small">Colors the selected text (or a new piece of text) from one color to the next. Pick a preset or set your own colors.</p>
+      <div id="grad-presets" class="grad-presets"></div>
+      <div class="grad-stops-head row-between">
+        <span class="attr-name">Colors</span>
+        <span class="row inline">
+          <button type="button" class="btn small" id="grad-add">+ Color</button>
+          <button type="button" class="btn small" id="grad-reverse" title="Reverse the order">⇄ Reverse</button>
+        </span>
+      </div>
+      <div id="grad-stops" class="grad-stops"></div>
+      <div id="grad-bar" class="grad-bar"></div>
+      <div id="grad-preview" class="grad-preview"></div>
+      <p class="muted small" id="grad-how"></p>
+      <code id="grad-code" class="snippet grad-code"></code>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn primary" value="ok">Apply</button>
       </div>
     </form>
   </dialog>

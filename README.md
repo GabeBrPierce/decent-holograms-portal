@@ -12,7 +12,11 @@ It runs inside your Minecraft server as a small plugin (**HoloPortal**). There's
 
 **Holograms**
 - Text, item, head, small head and entity lines, with a live preview
-- A formatting toolbar: color codes, bold and friends, hex colors, gradients, animations and PlaceholderAPI placeholders
+- A formatting toolbar: color codes, bold and friends, hex colors, animations and PlaceholderAPI placeholders
+- A gradient & rainbow builder: presets (rainbow, pastel, sunset, fire, ocean, aurora...) or up to 8 of your own colors. It uses DecentHolograms' native `<RAINBOW1>` and two-color gradient tags, and chains two-color pieces for longer gradients without splitting placeholders or animations
+- An asset picker with real Minecraft icons: every item and block (images from [mcasset.cloud](https://mcasset.cloud)), player heads by name, pasted textures, and ~94,000 custom heads from [minecraft-heads.com](https://minecraft-heads.com), searchable by category
+- Item options as fields: enchant glint, head value and NBT/components (`PLAYER_HEAD (Notch) {CustomModelData:1} !ENCHANTED`)
+- Every entity DecentHolograms can show, with spawn-egg icons. Entities it can't show (rockets, TNT, boats, minecarts...) can be shown as an item instead in one click
 - Animations play in the preview exactly as they do in game, and lines with a broken or misused animation tag get a hint
 - Pages, and click actions for left, right and shift clicks (message, command, console command, teleport, sound, next/previous page, permission checks...)
 - Per-line height, offsets, facing, permission and flags
@@ -84,6 +88,7 @@ session-hours: 12     # how long a login lasts
 ## How it works
 
 - **Holograms:** saving writes the hologram's file in DecentHolograms' own format and has DecentHolograms load it again (the same path `/dh reload` uses), so anything DecentHolograms can store, the editor can set. If DecentHolograms rejects the file, the previous version is restored.
+- **Asset picker:** `icons.json` maps every item to its inventory icon (a flat sprite or the three faces of a cube). It's generated from the vanilla assets by `node tools/gen-icons.mjs <version>`; re-run it for a new Minecraft version. The head library is downloaded by the server from minecraft-heads.com's public lists, trimmed to name, tags and texture hash, and cached in `plugins/HoloPortal/heads/` for a week (`heads.library: false` turns it off). Set `heads.app-uuid` (and `heads.api-key` for a license) to use their API v2 instead.
 - **Animations:** custom animations are files in `plugins/DecentHolograms/animations/` (`speed`, `pause` and `steps`). Saving writes the file and reloads DecentHolograms' animations. The preview uses a port of DecentHolograms' animation code, including its quirks: the built-in typewriter, wave, burn and scroll drop color codes inside the tag, and a custom animation's last frame only shows when its pause is at least its speed.
 - **Displays:** DecentHolograms doesn't offer a plugin API for displays yet, so the editor writes the display's file in `plugins/DecentHolograms/displays/` and asks DecentHolograms to reload its displays. Every display briefly respawns when you save one. Warnings DecentHolograms logs about the display (for example a skipped attribute) are shown in the editor, and the old file is restored if the display doesn't load.
 - The web server is the JDK's built-in HTTP server and the editor is plain HTML, CSS and JavaScript, so the plugin has no extra dependencies.

@@ -98,6 +98,16 @@ final class HologramService {
         });
     }
 
+    private static List<String> allowedEntities() {
+        try {
+            return eu.decentsoftware.holograms.api.utils.entity.DecentEntityType.getAllowedEntityTypeNames().stream()
+                    .filter(n -> !n.equals("UNKNOWN")).sorted().toList();
+        } catch (Throwable t) {
+            // Older DH builds without this helper: living entities are always safe.
+            return Arrays.stream(EntityType.values()).filter(e -> e != EntityType.UNKNOWN && e.isAlive()).map(Enum::name).sorted().toList();
+        }
+    }
+
     /** The first text line of the first page, for the sidebar. */
     private static String previewLine(Hologram h) {
         if (h.getPages().isEmpty()) return "";
@@ -150,8 +160,11 @@ final class HologramService {
             o.add("materials", strings(Arrays.stream(Material.values())
                     .filter(m -> !m.name().startsWith("LEGACY_") && m.isItem() && !m.isAir())
                     .map(Enum::name).sorted().toList()));
-            o.add("entities", strings(Arrays.stream(EntityType.values())
-                    .filter(t -> t != EntityType.UNKNOWN && t.isAlive())
+            // DH's own list of entities it can show; the rest are blacklisted (they need data a fake entity can't have).
+            List<String> allowed = allowedEntities();
+            o.add("entities", strings(allowed));
+            o.add("entityBlacklist", strings(Arrays.stream(EntityType.values())
+                    .filter(t -> t != EntityType.UNKNOWN && !allowed.contains(t.name()))
                     .map(Enum::name).sorted().toList()));
             o.add("actionTypes", strings(ActionType.getActionTypes().stream().map(ActionType::getName).sorted().toList()));
             o.add("clickTypes", strings(Arrays.stream(ClickType.values()).map(Enum::name).toList()));

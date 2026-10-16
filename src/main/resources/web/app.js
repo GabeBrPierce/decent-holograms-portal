@@ -500,6 +500,7 @@ const ANIM_TEMPLATES = {
   sparkle: { label: 'Sparkle', speed: 5, pause: 0, steps: () => ['&e✦ &f{text} &e✦', '&6✧ &f{text} &6✧', '&e⋆ &f{text} &e⋆', '&6✧ &f{text} &6✧'] },
   arrows: { label: 'Arrows', speed: 4, pause: 0, steps: () => ['&a»  &f{text}  &a«', '&a »&f{text}&a« ', '&a  »&f{text}&a«  ', '&a »&f{text}&a« '] },
   shine: { label: 'Gradient shine', speed: 2, pause: 30, steps: () => shineFrames('#55FFFF', '#FFFFFF', 12) },
+  rainbow: { label: 'Rainbow shift', speed: 2, pause: 2, steps: () => rainbowShiftFrames(16) },
 };
 function updateNewDialog() {
   const kind = newKind();
@@ -861,34 +862,23 @@ function typeOf(content) {
   return 'TEXT';
 }
 
-/** The part of a line the user edits, without the #TYPE: prefix (and PLAYER_HEAD wrapper for heads). */
+/** The part of a line the user edits: everything after the #TYPE: prefix. */
 function valueOf(line) {
   if (line.type === 'TEXT') return line.content;
-  let rest = line.content.slice(PREFIX[line.type].length).trim();
-  if (line.type === 'HEAD' || line.type === 'SMALLHEAD') {
-    const m = rest.match(/^PLAYER_HEAD\s*\((.*)\)\s*$/i);
-    if (m) rest = m[1];
-  }
-  return rest;
+  return line.content.slice(PREFIX[line.type].length).trim();
 }
 
 function contentFor(type, value) {
   if (type === 'TEXT') return value;
-  if (type === 'HEAD' || type === 'SMALLHEAD') {
-    const v = value.trim();
-    // Raw item syntax (e.g. "DIAMOND_BLOCK" or "PLAYER_HEAD (x)") is passed through.
-    if (/^[A-Z_]+(\s*\(.*\))?(\s*!ENCHANTED)?$/.test(v) && v.includes('_')) return `${PREFIX[type]} ${v}`;
-    return `${PREFIX[type]} PLAYER_HEAD (${v})`;
-  }
   return `${PREFIX[type]} ${value.trim()}`;
 }
 
-const DEFAULT_VALUE = { TEXT: '&fNew line', ICON: 'DIAMOND', HEAD: '{player}', SMALLHEAD: '{player}', ENTITY: 'ALLAY' };
+const DEFAULT_VALUE = { TEXT: '&fNew line', ICON: 'DIAMOND', HEAD: 'PLAYER_HEAD ({player})', SMALLHEAD: 'PLAYER_HEAD ({player})', ENTITY: 'ALLAY' };
 const PLACEHOLDER = {
   TEXT: '&eText with &acolors&e, {player} and %placeholders%',
-  ICON: 'DIAMOND_SWORD   (add !ENCHANTED for the glint)',
-  HEAD: 'Player name, {player}, or a base64 texture',
-  SMALLHEAD: 'Player name, {player}, or a base64 texture',
+  ICON: 'DIAMOND_SWORD !ENCHANTED   or   PLAYER_HEAD (Notch)',
+  HEAD: 'PLAYER_HEAD (Notch)   or any block, e.g. GRASS_BLOCK',
+  SMALLHEAD: 'PLAYER_HEAD ({player})   or any block',
   ENTITY: 'ZOMBIE',
 };
 
@@ -949,11 +939,50 @@ function lineRow(line, i, lines) {
   input.placeholder = PLACEHOLDER[line.type];
   if (line.type === 'ICON') input.setAttribute('list', 'dl-materials');
   if (line.type === 'ENTITY') input.setAttribute('list', 'dl-entities');
-  const set = (v) => { line.content = contentFor(line.type, v); changed({ coalesce: true }); };
+  const hintEl = el('div', 'line-hint');
+  const showHint = () => { hintEl.textContent = lineHint(line); hintEl.hidden = !hintEl.textContent; };
+  let pick = null;
+  const lineIcon = () => (line.type === 'ENTITY' ? entityIcon(valueOf(line), 26) : itemSpecIcon(valueOf(line), 26));
+  const set = (v) => {
+    line.content = contentFor(line.type, v);
+    showHint();
+    if (pick) pick.replaceChildren(lineIcon());
+    changed({ coalesce: true });
+  };
   input.addEventListener('input', () => set(input.value));
   rememberText(input, li, line.type === 'TEXT' ? set : null);
   lineKeys(input, i, lines, () => renderLines(), '#lines', () => newLine('TEXT', ''));
-  main.append(input);
+  if (line.type === 'TEXT') {
+    main.append(input);
+  } else {
+    pick = pickerButton(lineIcon(), line.type === 'ENTITY' ? 'Pick an entity' : 'Pick an item, block or head', () => {
+      const tabs = line.type === 'ENTITY' ? ['entities'] : line.type === 'ICON' ? ['items', 'heads'] : ['heads', 'items'];
+      openPicker({
+        title: { ICON: 'Floating item', HEAD: 'Head (worn like a helmet)', SMALLHEAD: 'Small head', ENTITY: 'Entity' }[line.type],
+        tabs,
+        onPick: (r) => {
+          if (r.convert) {
+            line.content = r.convert;
+            line.type = typeOf(r.convert);
+            line.height = S.meta.defaults.heights[line.type];
+            renderLines(); changed();
+            toast('Switched this line to show it as an item, since DecentHolograms can\'t show it as an entity.');
+            return;
+          }
+          const spec = parseItem(valueOf(line));
+          if (r.entity) { input.value = r.entity; }
+          else if (r.item) { spec.material = r.item.toUpperCase(); if (!isHeadItem(spec.material)) spec.extras = ''; input.value = buildItem(spec); }
+          else if (r.head) { spec.material = 'PLAYER_HEAD'; spec.extras = r.head; input.value = buildItem(spec); }
+          S.lastPush = 0;
+          set(input.value);
+          if (S.openMore.has(key)) renderLines(); // refresh the head/glint/NBT options
+        },
+      });
+    });
+    const wrap = el('div', 'with-pick');
+    wrap.append(pick, input);
+    main.append(wrap);
+  }
 
   const height = document.createElement('input');
   height.type = 'number';
@@ -976,8 +1005,8 @@ function lineRow(line, i, lines) {
   main.append(btns);
   li.append(main);
 
-  const hint = lineHint(line);
-  if (hint) li.append(el('div', 'line-hint', hint));
+  showHint();
+  li.append(hintEl);
 
   if (S.openMore.has(key)) li.append(lineMore(line));
   return li;
@@ -1012,15 +1041,24 @@ function rememberText(input, li, set) {
 }
 
 function lineHint(line) {
-  if (line.type === 'TEXT') return animHint(line.content);
-  if (line.type === 'HEAD' || line.type === 'SMALLHEAD') return '{player} shows each viewer their own head.';
-  if (line.type === 'ICON' && line.content && !S.meta.materials.includes(valueOf(line).split(/[\s:(!{]/)[0].toUpperCase())) return 'Not a known item name. It will show as stone.';
-  if (line.type === 'ENTITY' && !S.meta.entities.includes(valueOf(line).split(/\s/)[0].toUpperCase())) return 'Not a known entity type.';
+  if (line.type === 'TEXT') return animHint(line.content) || rainbowHint(line.content);
+  if (line.type === 'ENTITY') {
+    const e = valueOf(line).split(/\s/)[0].toUpperCase();
+    if ((S.meta.entityBlacklist || []).includes(e)) return `DecentHolograms can't show ${e} as an entity. Use the picker to show it as an item instead.`;
+    if (!S.meta.entities.includes(e)) return 'Not a known entity type.';
+    return '';
+  }
+  const spec = parseItem(valueOf(line));
+  if (!spec.material) return 'Pick an item.';
+  if (!S.meta.materials.includes(spec.material.split(':')[0].toUpperCase())) return 'Not a known item name. It will show as stone.';
+  if (isHeadItem(spec.material) && !spec.extras) return 'Add a head in brackets, e.g. PLAYER_HEAD (Notch), or pick one with the button.';
+  if (isHeadItem(spec.material) && spec.extras === '{player}') return '{player} shows each viewer their own head.';
   return '';
 }
 
 function lineMore(line) {
   const more = el('div', 'line-more');
+  if (['ICON', 'HEAD', 'SMALLHEAD'].includes(line.type)) more.append(itemOptions(line));
   more.append(
     numField('Offset X', line.offsetX, 0.1, (v) => { line.offsetX = v; }),
     numField('Offset Z', line.offsetZ, 0.1, (v) => { line.offsetZ = v; }),
@@ -1048,6 +1086,47 @@ function lineMore(line) {
   }
   more.append(flags);
   return more;
+}
+
+/** Enchant glint, head value and NBT for an item line, editing its spec in place. */
+function itemOptions(line) {
+  const box = el('div', 'item-options');
+  const spec = parseItem(valueOf(line));
+  const write = () => { line.content = contentFor(line.type, buildItem(spec)); renderLines(); changed({ coalesce: true }); };
+  const ench = el('label', 'check small');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = spec.enchanted;
+  cb.addEventListener('change', () => { spec.enchanted = cb.checked; write(); });
+  ench.append(cb, 'Enchant glint');
+  box.append(ench);
+  if (isHeadItem(spec.material)) {
+    const f = el('label', 'field');
+    f.append(el('span', null, 'Head'));
+    const i = document.createElement('input');
+    i.value = spec.extras;
+    i.spellcheck = false;
+    i.className = 'mono';
+    i.placeholder = 'Player name, {player}, base64 texture or HEADDATABASE_<id>';
+    i.addEventListener('change', () => { spec.extras = i.value.trim(); write(); });
+    f.append(i);
+    box.append(f);
+  }
+  const n = el('label', 'field');
+  n.append(el('span', null, 'NBT / components'));
+  const ni = document.createElement('input');
+  ni.value = spec.nbt;
+  ni.spellcheck = false;
+  ni.className = 'mono';
+  ni.placeholder = '{CustomModelData:1}  or  {display:{color:3847138}}';
+  ni.addEventListener('change', () => {
+    const v = ni.value.trim();
+    spec.nbt = !v ? '' : v.startsWith('{') ? v : `{${v}}`;
+    write();
+  });
+  n.append(ni);
+  box.append(n);
+  return box;
 }
 
 function numField(label, value, step, set, placeholder, clear) {
@@ -1146,7 +1225,6 @@ $('#toolbar').addEventListener('click', (e) => {
   if (b) insertCode(b.dataset.code);
 });
 $('#hex-color').addEventListener('change', (e) => insertCode('&' + e.target.value.toUpperCase()));
-$('#grad-btn').addEventListener('click', () => insertCode(`<${$('#grad-a').value.toUpperCase()}>`, `</${$('#grad-b').value.toUpperCase()}>`));
 $('#ph-select').addEventListener('change', (e) => {
   const v = e.target.value;
   e.target.value = '';
@@ -1273,23 +1351,11 @@ function renderPreview() {
 }
 
 function itemPreview(line, px) {
-  const v = valueOf(line);
-  const size = line.type === 'SMALLHEAD' ? 26 : line.type === 'ENTITY' ? 48 : 34;
-  const box = el('div', 'mc-item');
-  box.style.width = size + 'px';
-  box.style.height = Math.min(size, Math.max(px, 20)) + 'px';
-  if ((line.type === 'HEAD' || line.type === 'SMALLHEAD') && /^[A-Za-z0-9_]{3,16}$/.test(v)) {
-    const img = document.createElement('img');
-    img.alt = v;
-    img.src = `https://mc-heads.net/avatar/${encodeURIComponent(v)}/64`;
-    img.onerror = () => { box.textContent = v; };
-    box.append(img);
-  } else {
-    box.style.width = 'auto';
-    box.style.minWidth = size + 'px';
-    box.style.padding = '2px 6px';
-    box.textContent = line.type === 'ENTITY' ? '🐾 ' + v : (line.type === 'ICON' ? v.split(' ')[0] : v);
-  }
+  const size = line.type === 'SMALLHEAD' ? 26 : line.type === 'ENTITY' ? 44 : 36;
+  const box = el('div', 'mc-item-pv');
+  box.style.height = Math.max(size, Math.min(px, 60)) + 'px';
+  box.append(line.type === 'ENTITY' ? entityIcon(valueOf(line), size) : itemSpecIcon(valueOf(line), size));
+  if (line.type === 'ICON' && parseItem(valueOf(line)).enchanted) box.classList.add('glint-pv');
   return box;
 }
 
@@ -1424,9 +1490,21 @@ function renderDisplay() {
       const known = isItem ? S.meta.materials.includes(k.toUpperCase()) : (S.meta.display.blocks || []).includes(k);
       hint.textContent = !k || known ? '' : `Not a known ${isItem ? 'item' : 'block'}. Saving will fail.`;
     };
-    i.addEventListener('input', () => { if (isItem) d.item = i.value.trim(); else d.block = i.value.trim(); check(); changed({ coalesce: true }); });
+    const pick = pickerButton(iconEl(i.value, 26), isItem ? 'Pick an item' : 'Pick a block', () => openPicker({
+      title: isItem ? 'Item to display' : 'Block to display',
+      tabs: [isItem ? 'items' : 'blocks'],
+      onPick: (r) => { i.value = 'minecraft:' + r.item; i.dispatchEvent(new Event('input')); S.lastPush = 0; },
+    }));
+    i.addEventListener('input', () => {
+      if (isItem) d.item = i.value.trim(); else d.block = i.value.trim();
+      pick.replaceChildren(iconEl(i.value, 26));
+      check();
+      changed({ coalesce: true });
+    });
     check();
-    f.append(i);
+    const wrap = el('div', 'with-pick');
+    wrap.append(pick, i);
+    f.append(wrap);
     card.append(f, hint);
   }
   main.append(card);
@@ -1576,7 +1654,19 @@ function attrControl(key, attr, rerender) {
       const i = document.createElement('input');
       i.value = attr.value; i.spellcheck = false;
       i.addEventListener('input', () => { attr.value = i.value; upd(); });
-      wrap.append(i);
+      if (key === 'skull-texture') {
+        const headIcon = () => { const id = headIdentifier(i.value); const b = el('span', 'mc-icon'); b.style.width = b.style.height = '26px'; if (id) b.append(headImg(id, 26)); return b; };
+        const pick = pickerButton(headIcon(), 'Pick a head', () => openPicker({
+          title: 'Head skin', tabs: ['heads'],
+          onPick: (r) => { if (r.head) { i.value = r.head; attr.value = r.head; pick.replaceChildren(headIcon()); S.lastPush = 0; upd(false); } },
+        }));
+        i.addEventListener('input', () => pick.replaceChildren(headIcon()));
+        const row = el('div', 'with-pick');
+        row.append(pick, i);
+        wrap.append(row);
+      } else {
+        wrap.append(i);
+      }
       break;
     }
     case 'rgba':
@@ -1685,10 +1775,13 @@ function renderDisplayPreview() {
     }
     thing.append(panel);
   } else {
-    const name = (d.type === 'ITEM' ? d.item : d.block).replace(/^minecraft:/, '') || '?';
-    const tile = el('div', d.type === 'BLOCK' ? 'd-block' : 'd-item');
-    if (d.type === 'ITEM' && A('enchanted')) tile.classList.add('glint');
-    tile.append(el('span', null, name.replace(/_/g, ' ')));
+    const id = itemId(d.type === 'ITEM' ? d.item : d.block);
+    const skin = d.type === 'ITEM' && id === 'player_head' && d.attributes['skull-texture'] ? headIdentifier(A('skull-texture')) : null;
+    const tile = el('div', 'd-icon');
+    if (d.type === 'ITEM' && A('enchanted')) tile.classList.add('glint-pv');
+    if (skin) { const b = el('span', 'mc-icon'); b.style.width = b.style.height = '72px'; b.append(headImg(skin, 72)); tile.append(b); }
+    else tile.append(iconEl(id, 72));
+    tile.append(el('span', 'd-icon-name', (ICONS.items[id] && ICONS.items[id].n) || id || '?'));
     thing.append(tile);
   }
   stage.append(thing);
@@ -1701,6 +1794,583 @@ function renderDisplayPreview() {
 }
 
 const rgba = (v) => `rgba(${v.red | 0}, ${v.green | 0}, ${v.blue | 0}, ${((v.alpha ?? 255) / 255).toFixed(3)})`;
+
+// ------------------------------------------------------------------ item icons
+// icons.json is generated by tools/gen-icons.mjs from the vanilla assets: a flat sprite (f), the three
+// visible faces of a cube (c: top, left, right) or a mob head skin (h). Textures load from mcasset.cloud.
+
+let ICONS = { base: '', items: {} };
+fetch('icons.json').then((r) => r.json()).then((d) => {
+  ICONS = d;
+  if (S.edit) renderEditor(); // redraw icons if the editor rendered before they arrived
+}).catch(() => {});
+
+/** Textures Minecraft stores grey and tints by biome (shown with plains green here). */
+const isTinted = (t) => /^block\/(grass_block_top|short_grass|tall_grass_(top|bottom)|fern|large_fern_(top|bottom)|vine|lily_pad|(oak|jungle|acacia|dark_oak|mangrove|birch|spruce)_leaves|sugar_cane|attached_(melon|pumpkin)_stem|(melon|pumpkin)_stem|bush)$/.test(t);
+
+const itemId = (s) => (s || '').trim().replace(/^minecraft:/i, '').split(/[\s:(!{]/)[0].toLowerCase();
+
+/** An <img>/<div> showing an item, block, head or entity icon at the given pixel size. */
+function iconEl(id, size = 32) {
+  const key = itemId(id);
+  const d = ICONS.items[key];
+  const box = el('span', 'mc-icon');
+  box.style.width = box.style.height = size + 'px';
+  if (!d) { box.classList.add('missing'); box.textContent = key ? key.slice(0, 2).toUpperCase() : '?'; return box; }
+  box.title = d.n;
+  if (d.f && isTinted(d.f)) {
+    // Grass, leaves etc. are stored grey and tinted green in game.
+    const url = `url("${ICONS.base}${d.f}.png")`;
+    const t = el('span', 'flat-tint tinted');
+    t.style.backgroundImage = url;
+    t.style.webkitMaskImage = t.style.maskImage = url;
+    box.append(t);
+  } else if (d.f) {
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = d.n;
+    img.src = ICONS.base + d.f + '.png';
+    box.append(img);
+  } else if (d.h) {
+    box.append(headImg(d.h, size));
+  } else if (d.c) {
+    const cube = el('span', 'mc-cube');
+    cube.style.setProperty('--s', size + 'px');
+    const c3 = el('span', 'c3');
+    // c is [top, side, front]; like the inventory, the front shows on the left.
+    [['top', d.c[0]], ['left', d.c[2]], ['right', d.c[1]]].forEach(([face, tex]) => {
+      const f = el('span', 'face ' + face + (isTinted(tex) ? ' tinted' : ''));
+      f.style.backgroundImage = `url("${ICONS.base}${tex}.png")`;
+      c3.append(f);
+    });
+    cube.append(c3);
+    box.append(cube);
+  }
+  return box;
+}
+
+function headImg(identifier, size = 32) {
+  const img = document.createElement('img');
+  img.loading = 'lazy';
+  img.alt = '';
+  img.src = `https://mc-heads.net/head/${encodeURIComponent(identifier)}/${Math.max(32, size * 2)}`;
+  img.style.width = img.style.height = size + 'px';
+  return img;
+}
+
+/** What mc-heads.net needs to draw a head value: a player name, or a texture hash. */
+function headIdentifier(value) {
+  const v = (value || '').trim();
+  if (!v || v === '{player}') return 'MHF_Steve';
+  if (/^[A-Za-z0-9_]{1,16}$/.test(v)) return v;
+  if (/^[0-9a-f]{32,}$/i.test(v)) return v.toLowerCase();
+  const hash = textureHash(v);
+  return hash || null;
+}
+
+function textureHash(value) {
+  const m = value.match(/textures\.minecraft\.net\/texture\/([0-9a-f]+)/i);
+  if (m) return m[1].toLowerCase();
+  try {
+    const json = atob(value.replace(/\s/g, ''));
+    const u = json.match(/textures\.minecraft\.net\/texture\/([0-9a-f]+)/i);
+    return u ? u[1].toLowerCase() : null;
+  } catch { return null; }
+}
+
+const textureValue = (hash) => btoa(JSON.stringify({ textures: { SKIN: { url: `http://textures.minecraft.net/texture/${hash}` } } }));
+
+/** The icon for an entity: its spawn egg, else an item with the same name. */
+function entityIcon(name, size = 32) {
+  const id = name.toLowerCase();
+  if (ICONS.items[id + '_spawn_egg']) return iconEl(id + '_spawn_egg', size);
+  return iconEl(id, size);
+}
+
+// ------------------------------------------------------------------ item specs
+// DH item syntax: MATERIAL[:data] [(head value)] [{nbt}] [!ENCHANTED]
+
+function parseItem(raw) {
+  let s = (raw || '').trim();
+  const out = { material: '', extras: '', nbt: '', enchanted: false };
+  const ex = s.match(/\((.*)\)/);
+  if (ex) { out.extras = ex[1]; s = s.replace(ex[0], ' '); }
+  const nbt = s.match(/\{.*\}/);
+  if (nbt) { out.nbt = nbt[0]; s = s.replace(nbt[0], ' '); }
+  if (/!ENCHANTED/i.test(s)) { out.enchanted = true; s = s.replace(/!ENCHANTED/ig, ' '); }
+  out.material = s.trim().split(/\s+/)[0] || '';
+  return out;
+}
+
+function buildItem(p) {
+  return [p.material.toUpperCase(), p.extras ? `(${p.extras})` : '', p.nbt, p.enchanted ? '!ENCHANTED' : ''].filter(Boolean).join(' ');
+}
+
+const isHeadItem = (m) => /^(PLAYER_HEAD|SKULL_ITEM)$/i.test(m);
+
+/** The preview image for an item line's content (after the #TYPE: prefix). */
+function itemSpecIcon(spec, size) {
+  const p = parseItem(spec);
+  if (isHeadItem(p.material) && p.extras) {
+    const id = headIdentifier(p.extras);
+    const box = el('span', 'mc-icon');
+    box.style.width = box.style.height = size + 'px';
+    if (id) box.append(headImg(id, size)); else { box.classList.add('missing'); box.textContent = 'HEAD'; }
+    return box;
+  }
+  return iconEl(p.material, size);
+}
+
+// ------------------------------------------------------------------ asset picker
+
+const BLACKLIST_AS_ITEM = {
+  FIREWORK_ROCKET: 'firework_rocket', TNT: 'tnt', FALLING_BLOCK: 'sand', ITEM_FRAME: 'item_frame', GLOW_ITEM_FRAME: 'glow_item_frame',
+  PAINTING: 'painting', EXPERIENCE_ORB: 'experience_bottle', FIREBALL: 'fire_charge', SMALL_FIREBALL: 'fire_charge',
+  DRAGON_FIREBALL: 'dragon_breath', WITHER_SKULL: 'wither_skeleton_skull', FISHING_BOBBER: 'fishing_rod', LEASH_KNOT: 'lead',
+  ITEM: 'diamond', MANNEQUIN: 'armor_stand', LIGHTNING_BOLT: 'lightning_rod', AREA_EFFECT_CLOUD: 'lingering_potion',
+};
+const BLACKLIST_WHY = {
+  FIREWORK_ROCKET: 'it would need firework data and fly away', TNT: 'it would fuse and explode', FALLING_BLOCK: 'it needs a block and falls',
+  PLAYER: 'it needs a real player profile', PAINTING: 'it needs a wall and a painting variant', LIGHTNING_BOLT: 'it only exists for a moment',
+  BLOCK_DISPLAY: 'make one in the Displays tab instead', ITEM_DISPLAY: 'make one in the Displays tab instead', TEXT_DISPLAY: 'make one in the Displays tab instead',
+  INTERACTION: 'it is invisible', MARKER: 'it is invisible',
+};
+
+const PK = { onPick: null, tab: 'items', tabs: [], blocksOnly: false, q: '', kind: 'all', headCat: 'all', headQ: '', headPage: 0 };
+
+/**
+ * Opens the picker. opts: { title, tabs: ['items'|'blocks'|'heads'|'entities'...], onPick(result) } where
+ * result is { item: 'diamond' } | { head: 'Notch' | '{player}' | '<base64>' } | { entity: 'PIG' } | { convert: '#ICON: TNT' }.
+ */
+function openPicker(opts) {
+  Object.assign(PK, { onPick: opts.onPick, tabs: opts.tabs, tab: opts.tabs[0], q: '', kind: 'all' });
+  $('#picker-title').textContent = opts.title || 'Pick';
+  renderPickerTabs();
+  renderPickerBody();
+  $('#picker').showModal();
+  setTimeout(() => { const s = $('#picker-body input[type=search]'); if (s) s.focus(); }, 30);
+}
+
+function pickDone(result) {
+  $('#picker').close();
+  if (PK.onPick) PK.onPick(result);
+}
+
+function renderPickerTabs() {
+  const tabs = $('#picker-tabs');
+  tabs.innerHTML = '';
+  tabs.hidden = PK.tabs.length < 2;
+  const labels = { items: 'Items & blocks', blocks: 'Blocks', heads: 'Heads', entities: 'Entities' };
+  for (const t of PK.tabs) {
+    const b = el('button', 'seg' + (t === PK.tab ? ' active' : ''), labels[t]);
+    b.type = 'button';
+    b.addEventListener('click', () => { PK.tab = t; renderPickerTabs(); renderPickerBody(); });
+    tabs.append(b);
+  }
+}
+
+function renderPickerBody() {
+  const body = $('#picker-body');
+  body.innerHTML = '';
+  $('#picker-credit').innerHTML = '';
+  if (PK.tab === 'heads') return renderHeadsTab(body);
+  if (PK.tab === 'entities') return renderEntitiesTab(body);
+  renderItemsTab(body, PK.tab === 'blocks');
+}
+
+function searchBox(value, placeholder, onInput) {
+  const s = document.createElement('input');
+  s.type = 'search';
+  s.placeholder = placeholder;
+  s.value = value;
+  s.className = 'picker-search';
+  s.addEventListener('input', () => onInput(s.value));
+  return s;
+}
+
+function renderItemsTab(body, blocksOnly) {
+  const bar = el('div', 'picker-bar');
+  const grid = el('div', 'picker-grid');
+  const note = el('p', 'muted small picker-note');
+  bar.append(searchBox(PK.q, blocksOnly ? 'Search blocks' : 'Search items and blocks', (v) => { PK.q = v; draw(); }));
+  if (!blocksOnly) {
+    const seg = el('div', 'segmented small');
+    for (const [k, label] of [['all', 'All'], ['blocks', 'Blocks'], ['items', 'Items']]) {
+      const b = el('button', 'seg' + (PK.kind === k ? ' active' : ''), label);
+      b.type = 'button';
+      b.addEventListener('click', () => { PK.kind = k; $$('.seg', seg).forEach((x) => x.classList.toggle('active', x === b)); draw(); });
+      seg.append(b);
+    }
+    bar.append(seg);
+  }
+  body.append(bar, grid, note);
+  const blockSet = new Set((S.meta.display && S.meta.display.blocks) || []);
+  const known = new Set(S.meta.materials.map((m) => m.toLowerCase()));
+  const draw = () => {
+    grid.innerHTML = '';
+    const q = PK.q.trim().toLowerCase();
+    const ids = Object.keys(ICONS.items).filter((id) => {
+      if (blocksOnly ? !blockSet.has(id) : !known.has(id)) return false;
+      const d = ICONS.items[id];
+      if (!blocksOnly && PK.kind === 'blocks' && !d.c) return false;
+      if (!blocksOnly && PK.kind === 'items' && d.c) return false;
+      return !q || id.includes(q.replace(/\s+/g, '_')) || d.n.toLowerCase().includes(q);
+    });
+    const shown = ids.slice(0, 280);
+    for (const id of shown) {
+      const b = el('button', 'pick-cell');
+      b.type = 'button';
+      b.title = `${ICONS.items[id].n} (${id})`;
+      b.append(iconEl(id, 36), el('span', 'pick-label', ICONS.items[id].n));
+      b.addEventListener('click', () => pickDone({ item: id }));
+      grid.append(b);
+    }
+    note.textContent = ids.length > shown.length ? `Showing ${shown.length} of ${ids.length}. Search to narrow it down.` : `${ids.length} found.`;
+  };
+  draw();
+}
+
+function renderEntitiesTab(body) {
+  const bar = el('div', 'picker-bar');
+  const grid = el('div', 'picker-grid');
+  const black = el('div');
+  bar.append(searchBox(PK.q, 'Search entities', (v) => { PK.q = v; draw(); }));
+  body.append(bar, grid, black);
+  const nice = (n) => n.toLowerCase().split('_').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+  const draw = () => {
+    const q = PK.q.trim().toLowerCase().replace(/\s+/g, '_');
+    grid.innerHTML = '';
+    for (const e of S.meta.entities.filter((n) => !q || n.toLowerCase().includes(q))) {
+      const b = el('button', 'pick-cell');
+      b.type = 'button';
+      b.title = e;
+      b.append(entityIcon(e, 36), el('span', 'pick-label', nice(e)));
+      b.addEventListener('click', () => pickDone({ entity: e }));
+      grid.append(b);
+    }
+    black.innerHTML = '';
+    const bl = (S.meta.entityBlacklist || []).filter((n) => !q || n.toLowerCase().includes(q));
+    if (!bl.length) return;
+    black.append(el('h4', 'picker-sub', 'Not supported by DecentHolograms'));
+    black.append(el('p', 'muted small', 'DecentHolograms can\'t show these as entities: they need data or behavior a fake hologram entity can\'t have. Most can be shown as an item instead.'));
+    const g2 = el('div', 'picker-grid');
+    for (const e of bl) {
+      const alt = BLACKLIST_AS_ITEM[e] || (ICONS.items[e.toLowerCase()] ? e.toLowerCase() : null);
+      const b = el('button', 'pick-cell blocked');
+      b.type = 'button';
+      b.append(alt ? iconEl(alt, 36) : entityIcon(e, 36), el('span', 'pick-label', nice(e)));
+      const why = BLACKLIST_WHY[e] ? ` (${BLACKLIST_WHY[e]})` : '';
+      if (e === 'PLAYER') {
+        b.title = `Players can't be entities${why}. Click to show the viewer's head instead.`;
+        b.addEventListener('click', () => pickDone({ convert: '#HEAD: PLAYER_HEAD ({player})' }));
+      } else if (alt) {
+        const isBlock = !!(ICONS.items[alt] && ICONS.items[alt].c);
+        b.title = `Not allowed as an entity${why}. Click to show ${ICONS.items[alt] ? ICONS.items[alt].n : alt} as ${isBlock ? 'a block (#HEAD)' : 'a floating item (#ICON)'} instead.`;
+        b.addEventListener('click', () => pickDone({ convert: `${isBlock ? '#HEAD:' : '#ICON:'} ${alt.toUpperCase()}` }));
+      } else {
+        b.disabled = true;
+        b.title = `Not allowed as an entity${why}, and there's no matching item.`;
+      }
+      g2.append(b);
+    }
+    black.append(g2);
+  };
+  draw();
+}
+
+function renderHeadsTab(body) {
+  // Player name / viewer
+  const quick = el('section', 'picker-section');
+  quick.append(el('h4', 'picker-sub', 'A player\'s head'));
+  const row = el('div', 'row inline');
+  const name = document.createElement('input');
+  name.placeholder = 'Player name, e.g. Notch';
+  name.maxLength = 16;
+  const pv = el('span', 'head-pv');
+  const showPv = () => { pv.innerHTML = ''; if (/^[A-Za-z0-9_]{1,16}$/.test(name.value)) pv.append(headImg(name.value, 40)); };
+  name.addEventListener('input', showPv);
+  const use = el('button', 'btn small', 'Use');
+  use.type = 'button';
+  use.addEventListener('click', () => { if (name.value.trim()) pickDone({ head: name.value.trim() }); });
+  const viewer = el('button', 'btn small', 'Each viewer\'s own head ({player})');
+  viewer.type = 'button';
+  viewer.addEventListener('click', () => pickDone({ head: '{player}' }));
+  row.append(pv, name, use, viewer);
+  quick.append(row);
+
+  // Texture value
+  const tex = el('section', 'picker-section');
+  tex.append(el('h4', 'picker-sub', 'A texture'));
+  const trow = el('div', 'row inline');
+  const val = document.createElement('input');
+  val.placeholder = 'Paste a base64 texture value, a textures.minecraft.net URL, or HEADDATABASE_<id>';
+  val.className = 'mono grow';
+  const tpv = el('span', 'head-pv');
+  val.addEventListener('input', () => {
+    tpv.innerHTML = '';
+    const h = textureHash(val.value.trim());
+    if (h) tpv.append(headImg(h, 40));
+  });
+  const tuse = el('button', 'btn small', 'Use');
+  tuse.type = 'button';
+  tuse.addEventListener('click', () => {
+    const v = val.value.trim();
+    if (!v) return;
+    if (/^HEADDATABASE_\w+$/i.test(v)) return pickDone({ head: v.toUpperCase() });
+    const h = textureHash(v);
+    if (!h) { toast('That isn\'t a texture value or textures.minecraft.net URL.', true); return; }
+    pickDone({ head: /^ey/i.test(v) ? v : textureValue(h) });
+  });
+  trow.append(tpv, val, tuse);
+  tex.append(trow);
+
+  // Library
+  const lib = el('section', 'picker-section');
+  lib.append(el('h4', 'picker-sub', 'Head library'));
+  const bar = el('div', 'picker-bar');
+  const cat = document.createElement('select');
+  cat.append(new Option('All categories', 'all'));
+  const grid = el('div', 'picker-grid heads');
+  const pager = el('div', 'row inline pager');
+  const status = el('p', 'muted small');
+  bar.append(cat, searchBox(PK.headQ, 'Search heads, e.g. pumpkin', (v) => { PK.headQ = v; PK.headPage = 0; debounceLoad(); }));
+  lib.append(bar, status, grid, pager);
+  body.append(quick, tex, lib);
+  $('#picker-credit').innerHTML = 'Heads from <a href="https://minecraft-heads.com" target="_blank" rel="noopener">minecraft-heads.com</a>, rendered by <a href="https://mc-heads.net" target="_blank" rel="noopener">mc-heads.net</a>';
+
+  let timer, seq = 0;
+  const debounceLoad = () => { clearTimeout(timer); timer = setTimeout(loadPage, 300); };
+  const loadPage = async () => {
+    const my = ++seq;
+    status.textContent = 'Loading… (the first time for a category can take a few seconds)';
+    try {
+      const r = await api('GET', `heads?cat=${encodeURIComponent(PK.headCat)}&q=${encodeURIComponent(PK.headQ)}&page=${PK.headPage}`);
+      if (my !== seq) return;
+      grid.innerHTML = '';
+      for (const h of r.heads) {
+        const b = el('button', 'pick-cell head');
+        b.type = 'button';
+        b.title = h.name + (h.tags ? ` (${h.tags})` : '');
+        b.append(headImg(h.hash, 40), el('span', 'pick-label', h.name));
+        b.addEventListener('click', () => pickDone({ head: textureValue(h.hash) }));
+        grid.append(b);
+      }
+      status.textContent = r.total ? `${r.total.toLocaleString()} heads` : 'No heads found.';
+      pager.innerHTML = '';
+      if (r.pages > 1) {
+        const prev = el('button', 'btn small', '← Previous');
+        prev.type = 'button'; prev.disabled = r.page === 0;
+        prev.addEventListener('click', () => { PK.headPage = r.page - 1; loadPage(); });
+        const next = el('button', 'btn small', 'Next →');
+        next.type = 'button'; next.disabled = r.page >= r.pages - 1;
+        next.addEventListener('click', () => { PK.headPage = r.page + 1; loadPage(); });
+        pager.append(prev, el('span', 'muted small', `Page ${r.page + 1} of ${r.pages}`), next);
+      }
+    } catch (e) {
+      if (my === seq) status.textContent = e.message;
+    }
+  };
+  cat.addEventListener('change', () => { PK.headCat = cat.value; PK.headPage = 0; loadPage(); });
+  api('GET', 'heads').then((r) => {
+    if (!r.enabled) { lib.querySelector('.picker-bar').hidden = true; status.textContent = 'The head library is turned off in config.yml (heads.library).'; return; }
+    for (const c of r.categories) cat.append(new Option(c.label, c.id));
+    cat.value = PK.headCat;
+    if (PK.headCat !== 'all' || PK.headQ) loadPage();
+    else status.textContent = 'Pick a category or search all heads.';
+  }).catch((e) => { status.textContent = e.message; });
+}
+
+/** A small button showing the current asset, which opens the picker. */
+function pickerButton(iconNode, title, onClick) {
+  const b = el('button', 'pick-btn');
+  b.type = 'button';
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  b.append(iconNode);
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+// ------------------------------------------------------------------ gradient & rainbow builder
+
+const GRAD_PRESETS = {
+  rainbow: { label: 'Rainbow', native: true, stops: ['#FF0000', '#FFFF00', '#00FF00', '#00FFFF', '#0000FF', '#FF00FF'] },
+  pastel: { label: 'Pastel rainbow', stops: ['#FFB3BA', '#FFDFBA', '#FFFFBA', '#BAFFC9', '#BAE1FF', '#E0BBFF'] },
+  sunset: { label: 'Sunset', stops: ['#FF5E62', '#FF9966', '#FFD86F'] },
+  fire: { label: 'Fire', stops: ['#FF1F00', '#FF8A00', '#FFE600'] },
+  ocean: { label: 'Ocean', stops: ['#00E5FF', '#2979FF'] },
+  aurora: { label: 'Aurora', stops: ['#00F5A0', '#00D9F5', '#B967FF'] },
+  candy: { label: 'Candy', stops: ['#FF77E9', '#B967FF', '#5EE7FF'] },
+  toxic: { label: 'Toxic', stops: ['#C6FF00', '#00FF87'] },
+  ice: { label: 'Ice', stops: ['#FFFFFF', '#9BE7FF', '#3A8DFF'] },
+  gold: { label: 'Gold', stops: ['#FFF3A3', '#FFC300', '#FF8C00'] },
+  royal: { label: 'Royal', stops: ['#F5D76E', '#B967FF', '#5B2A86'] },
+};
+const grad = { preset: 'rainbow', stops: [...GRAD_PRESETS.rainbow.stops], native: true, text: '', specials: '', selection: null };
+
+// Pieces that must never be split by a multi-color gradient: animation tags, placeholders, then single characters.
+const GRAD_TOKEN = /[<{]#?ANIM:\w+(?::\S+)?[}>].*?[<{]\/#?ANIM[}>]|%[A-Za-z0-9_:.\-]+%|\{player\}|\{text\}|[\s\S]/g;
+
+/** Strips colors that would fight the gradient; keeps bold/italic/etc. (DH applies those to every character). */
+function cleanForGradient(raw) {
+  let t = raw.replace(DH_GRADIENT, '$2').replace(/<\/?RAINBOW\d*>/g, '')
+    .replace(/[<{]\/?#[0-9a-f]{6}[}>]|[&§]#[0-9a-f]{6}/gi, '').replace(/[&§][0-9a-fr]/gi, '');
+  let specials = '';
+  for (const c of DH_SPECIAL) if (t.includes(c)) { specials += c; t = t.split(c).join(''); }
+  return { text: t, specials };
+}
+
+function gradientCode(text, specials, stops, native) {
+  text = text || 'Rainbow text';
+  if (native) return `<RAINBOW1>${specials}${text}</RAINBOW>`;
+  const st = stops.map((s) => s.toUpperCase());
+  if (st.length === 1) return `&${st[0]}${specials}${text}`;
+  if (st.length === 2) return `<${st[0]}>${specials}${text}</${st[1]}>`;
+  // DH gradients take two colors, so chain two-color pieces end to end.
+  const tokens = text.match(GRAD_TOKEN) || [];
+  const n = tokens.length;
+  const segCount = Math.max(1, Math.min(st.length - 1, Math.floor(n / 2)));
+  const used = Array.from({ length: segCount + 1 }, (_, j) => st[Math.round((j * (st.length - 1)) / segCount)]);
+  let out = '';
+  for (let j = 0; j < segCount; j++) {
+    const seg = tokens.slice(Math.round((j * n) / segCount), Math.round(((j + 1) * n) / segCount)).join('');
+    if (!seg) continue;
+    out += seg.length === 1 ? `&${used[j]}${specials}${seg}` : `<${used[j]}>${specials}${seg}</${used[j + 1]}>`;
+  }
+  return out;
+}
+
+$('#grad-btn').addEventListener('click', () => {
+  const target = S.lastText;
+  if (!target || !document.body.contains(target.input)) { toast('Click into a text line first.', true); return; }
+  const { input } = target;
+  const s = input.selectionStart ?? input.value.length, e = input.selectionEnd ?? s;
+  Object.assign(grad, cleanForGradient(input.value.slice(s, e)), { selection: { start: s, end: e } });
+  renderGradient();
+  $('#grad-dialog').showModal();
+});
+
+function renderGradient() {
+  const presets = $('#grad-presets');
+  presets.innerHTML = '';
+  for (const [k, p] of Object.entries(GRAD_PRESETS)) {
+    const b = el('button', 'grad-chip' + (grad.preset === k ? ' active' : ''));
+    b.type = 'button';
+    const sw = el('span', 'grad-swatch');
+    sw.style.background = cssGradient(p.stops, p.native);
+    b.append(sw, el('span', null, p.label));
+    b.addEventListener('click', () => { Object.assign(grad, { preset: k, stops: [...p.stops], native: !!p.native }); renderGradient(); });
+    presets.append(b);
+  }
+
+  const stops = $('#grad-stops');
+  stops.innerHTML = '';
+  grad.stops.forEach((c, i) => {
+    const row = el('div', 'grad-stop');
+    const color = document.createElement('input');
+    color.type = 'color';
+    color.value = c.toLowerCase();
+    const hex = document.createElement('input');
+    hex.value = c.toUpperCase();
+    hex.maxLength = 7;
+    hex.className = 'mono hex-in';
+    const set = (v) => { grad.stops[i] = v.toUpperCase(); grad.preset = 'custom'; grad.native = false; updateGradientOutput(); $$('.grad-chip').forEach((x) => x.classList.remove('active')); };
+    color.addEventListener('input', () => { hex.value = color.value.toUpperCase(); set(color.value); });
+    hex.addEventListener('input', () => { if (/^#[0-9a-f]{6}$/i.test(hex.value)) { color.value = hex.value.toLowerCase(); set(hex.value); } });
+    const del = iconBtn('✕', 'Remove this color', grad.stops.length <= 2, () => { grad.stops.splice(i, 1); grad.preset = 'custom'; grad.native = false; renderGradient(); }, 'danger');
+    row.append(color, hex, del);
+    stops.append(row);
+  });
+  updateGradientOutput();
+}
+
+function updateGradientOutput() {
+  $('#grad-bar').style.background = cssGradient(grad.stops, grad.native);
+  const code = gradientCode(grad.text, grad.specials, grad.stops, grad.native);
+  const pv = $('#grad-preview');
+  pv.innerHTML = '';
+  const t = el('span', 'mc-text big');
+  mcLive(t, code);
+  pv.append(t);
+  $('#grad-code').textContent = code;
+  const pieces = (code.match(/<\/#[0-9A-F]{6}>/g) || []).length;
+  let how = grad.native
+    ? 'Uses DecentHolograms\' built-in rainbow tag, <RAINBOW1>: short, and it spreads the whole spectrum over the text.'
+    : grad.stops.length === 2 ? 'A two-color gradient tag.'
+      : pieces > 1 ? `DecentHolograms gradients take two colors, so this joins ${pieces} two-color pieces end to end. Placeholders and animations stay whole.`
+        : 'The text is too short to split, so this is one gradient from the first color to the last.';
+  const clash = coloredAnimIn(grad.text);
+  if (clash) how += ` Careful: the "${clash}" animation adds its own colors, which show up as text like &6 inside a gradient. Use an animation without colors, or put the gradient in its frames.`;
+  $('#grad-how').textContent = how;
+  $('#grad-add').disabled = grad.stops.length >= 8;
+}
+
+function cssGradient(stops, native) {
+  if (native) return 'linear-gradient(90deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f)';
+  return stops.length === 1 ? stops[0] : `linear-gradient(90deg, ${stops.join(', ')})`;
+}
+
+$('#grad-add').addEventListener('click', () => {
+  if (grad.stops.length >= 8) return;
+  grad.stops.push(grad.stops[grad.stops.length - 1]);
+  grad.preset = 'custom'; grad.native = false;
+  renderGradient();
+});
+$('#grad-reverse').addEventListener('click', () => {
+  grad.stops.reverse();
+  if (grad.native) { grad.native = false; grad.preset = 'custom'; } // the rainbow tag can't run backwards
+  renderGradient();
+});
+
+$('#grad-form').addEventListener('submit', (e) => {
+  if (!e.submitter || e.submitter.value !== 'ok') return;
+  const { input, set } = S.lastText;
+  const { start, end } = grad.selection;
+  const code = gradientCode(grad.text, grad.specials, grad.stops, grad.native);
+  input.value = input.value.slice(0, start) + code + input.value.slice(end);
+  input.focus();
+  input.setSelectionRange(start, start + code.length);
+  S.lastPush = 0;
+  set(input.value);
+});
+
+/** Animation frames: a two-color gradient whose colors travel round the color wheel. */
+function rainbowShiftFrames(n) {
+  return Array.from({ length: n }, (_, i) => {
+    const a = rgbHex(javaHsb(i / n, 1, 1)), b = rgbHex(javaHsb((i / n + 0.4) % 1, 1, 1));
+    return `<#${a}>{text}</#${b}>`;
+  });
+}
+
+/** The first animation in the text whose output contains color codes (they show as text inside a gradient). */
+function coloredAnimIn(text) {
+  const defs = animDefs();
+  const re = /[<{]#?ANIM:(\w+)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const d = defs[m[1]];
+    if (!d) continue;
+    const colored = d.builtin ? ['wave', 'burn', 'colors'].includes(d.name)
+      : (d.steps || []).some((f) => /[&§][0-9a-fr]|&#|[<{]#[0-9a-f]{6}/i.test(f));
+    if (colored) return d.name;
+  }
+  return '';
+}
+
+/** Hints for gradient and rainbow tags DecentHolograms won't treat as you'd expect. */
+function rainbowHint(content) {
+  const wrapped = [...content.matchAll(new RegExp(DH_GRADIENT.source, 'g'))].map((m) => m[2])
+    .concat([...content.matchAll(/<RAINBOW[0-9]{1,3}>(.*?)<\/RAINBOW>/g)].map((m) => m[1]));
+  for (const inner of wrapped) {
+    const clash = coloredAnimIn(inner);
+    if (clash) return `The "${clash}" animation adds its own colors, which show up as text like &6 inside this gradient. Use an animation without colors, or put the gradient in its frames.`;
+  }
+  if (/<RAINBOW>/.test(content)) return 'Rainbow tags need a number: <RAINBOW1>text</RAINBOW>.';
+  const m = content.match(/<RAINBOW([0-9]{1,3})>/);
+  if (m && m[1] !== '1') return `<RAINBOW${m[1]}> gives dark or odd colors. Use <RAINBOW1> for the normal rainbow.`;
+  if (m && !content.includes('</RAINBOW>')) return 'The rainbow tag isn\'t closed. Add </RAINBOW> after the text.';
+  return '';
+}
 
 // ------------------------------------------------------------------ animations: engine
 // A port of DecentHolograms' text animations, so previews play exactly as they do in game.
@@ -1801,7 +2471,7 @@ function mcLive(target, text) {
   if (hasAnim(text)) LIVE.add(entry);
 }
 function drawLive(e) {
-  const out = hasAnim(e.text) ? applyAnimations(e.text, tickNow()) : e.text;
+  const out = hasAnim(e.text) ? applyAnimations(e.text.replace(/\{player\}/g, 'Steve'), tickNow()) : e.text;
   if (out === e.last) return;
   e.last = out;
   e.el.textContent = '';
@@ -2180,8 +2850,8 @@ function renderMc(text) {
   const reset = () => ({ color: '#FFFFFF', b: false, i: false, u: false, s: false, k: false });
   let style = reset();
 
-  text = text.replace(/<#([0-9a-f]{6})>(.*?)<\/#([0-9a-f]{6})>/gi, (_, a, body, b) => gradient(body, a, b));
-  text = text.replace(/<RAINBOW\d*>(.*?)<\/RAINBOW>/gi, (_, body) => rainbow(body));
+  // DH fills in placeholders before animations and colors; {player} previews as Steve.
+  text = dhColors(text.replace(/\{player\}/g, 'Steve'));
 
   const push = (s, cls) => {
     if (!s) return;
@@ -2197,15 +2867,16 @@ function renderMc(text) {
     frag.append(span);
   };
 
-  const re = /&#([0-9a-f]{6})|\{#([0-9a-f]{6})\}|<#([0-9a-f]{6})>|[&§]([0-9a-fk-or])|(%[A-Za-z0-9_:.\-]+%|\{player\}|\{text\})/gi;
+  // DecentHolograms' SolidPattern (<#hex>, {#hex}, &#hex, #hex), then legacy codes and placeholders.
+  const re = /[<{]#([0-9a-f]{6})[}>]|[&§]?#([0-9a-f]{6})|[&§]([0-9a-fk-or])|(%[A-Za-z0-9_:.\-]+%|\{player\}|\{text\})/gi;
   let last = 0, m;
   while ((m = re.exec(text))) {
     push(text.slice(last, m.index));
     last = re.lastIndex;
-    const hex = m[1] || m[2] || m[3];
+    const hex = m[1] || m[2];
     if (hex) { style = { ...reset(), color: '#' + hex }; continue; }
-    if (m[4]) {
-      const c = m[4].toLowerCase();
+    if (m[3]) {
+      const c = m[3].toLowerCase();
       if (MC_COLORS[c]) style = { ...reset(), color: MC_COLORS[c] };
       else if (c === 'l') style.b = true;
       else if (c === 'o') style.i = true;
@@ -2215,30 +2886,70 @@ function renderMc(text) {
       else if (c === 'r') style = reset();
       continue;
     }
-    if (m[5]) push(m[5] === '{player}' ? 'Steve' : m[5], m[5] === '{player}' ? null : 'mc-ph');
+    if (m[4]) push(m[4] === '{player}' ? 'Steve' : m[4], m[4] === '{player}' ? null : 'mc-ph');
   }
   push(text.slice(last));
   return frag;
 }
 
-function gradient(body, a, b) {
-  const chars = [...body.replace(/&[0-9a-fk-or]/gi, '')];
-  const ca = hexRgb(a), cb = hexRgb(b);
-  return chars.map((ch, i) => {
-    const tt = chars.length < 2 ? 0 : i / (chars.length - 1);
-    const c = ca.map((v, k) => Math.round(v + (cb[k] - v) * tt));
-    return '&#' + c.map((v) => v.toString(16).padStart(2, '0')).join('') + ch;
-  }).join('');
+// A port of DecentHolograms' IridiumColorAPI gradient and rainbow patterns (same rounding, same quirks).
+const DH_SPECIAL = ['&l', '&n', '&o', '&k', '&m'];
+const DH_GRADIENT = /[<{]#([A-Fa-f0-9]{6})[}>](((?![<{]#[A-Fa-f0-9]{6}[}>]).)*)[<{]\/#([A-Fa-f0-9]{6})[}>]/g;
+const DH_RAINBOW = /<RAINBOW([0-9]{1,3})>(.*?)<\/RAINBOW>/g;
+
+function dhColors(text) {
+  if (text.includes('#')) text = text.replace(DH_GRADIENT, (all, a, content, _x, b) => dhPaint(content, (n) => dhGradientColors(hexRgb(a), hexRgb(b), n)));
+  if (text.includes('<')) text = text.replace(DH_RAINBOW, (all, sat, content) => dhPaint(content, (n) => dhRainbowColors(n, parseFloat(sat))));
+  return text;
 }
-function rainbow(body) {
-  const chars = [...body];
-  return chars.map((ch, i) => '&#' + hsl((i / Math.max(1, chars.length)) * 360) + ch).join('');
+
+/** Colors each character, keeping bold/italic/etc. on every one (IridiumColorAPI.color / rainbow). */
+function dhPaint(content, colorsFor) {
+  let specials = '';
+  for (const c of DH_SPECIAL) if (content.includes(c)) { specials += c; content = content.split(c).join(''); }
+  const chars = content.split('');
+  const colors = colorsFor(chars.length);
+  return chars.map((ch, i) => '&#' + rgbHex(colors[i] || [255, 255, 255]) + specials + ch).join('');
 }
+
+function dhGradientColors(start, end, n) {
+  if (n <= 1) return [[255, 255, 255]]; // DH falls back to white
+  const step = start.map((v, k) => Math.floor(Math.abs(v - end[k]) / (n - 1)));
+  const dir = start.map((v, k) => (v < end[k] ? 1 : -1));
+  return Array.from({ length: n }, (_, i) => start.map((v, k) => v + step[k] * i * dir[k]));
+}
+
+function dhRainbowColors(n, sat) {
+  const out = [];
+  const colorStep = 1 / n;
+  for (let i = 0; i < n; i++) out.push(javaHsb(colorStep * i, sat, sat));
+  return out;
+}
+
+/** java.awt.Color.HSBtoRGB, including what it does with out-of-range values. */
+function javaHsb(h, s, b) {
+  let r = 0, g = 0, bl = 0;
+  if (s === 0) {
+    r = g = bl = (b * 255 + 0.5) | 0;
+  } else {
+    const hh = (h - Math.floor(h)) * 6;
+    const f = hh - Math.floor(hh);
+    const p = b * (1 - s), q = b * (1 - s * f), t = b * (1 - s * (1 - f));
+    switch (Math.floor(hh)) {
+      case 0: r = (b * 255 + 0.5) | 0; g = (t * 255 + 0.5) | 0; bl = (p * 255 + 0.5) | 0; break;
+      case 1: r = (q * 255 + 0.5) | 0; g = (b * 255 + 0.5) | 0; bl = (p * 255 + 0.5) | 0; break;
+      case 2: r = (p * 255 + 0.5) | 0; g = (b * 255 + 0.5) | 0; bl = (t * 255 + 0.5) | 0; break;
+      case 3: r = (p * 255 + 0.5) | 0; g = (q * 255 + 0.5) | 0; bl = (b * 255 + 0.5) | 0; break;
+      case 4: r = (t * 255 + 0.5) | 0; g = (p * 255 + 0.5) | 0; bl = (b * 255 + 0.5) | 0; break;
+      case 5: r = (b * 255 + 0.5) | 0; g = (p * 255 + 0.5) | 0; bl = (q * 255 + 0.5) | 0; break;
+    }
+  }
+  const rgb = (r << 16) | (g << 8) | bl;
+  return [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255];
+}
+
 const hexRgb = (h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
-function hsl(h) {
-  const f = (n) => { const k = (n + h / 30) % 12; return Math.round(255 * (0.5 - 0.5 * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
-  return [f(0), f(8), f(4)].map((v) => v.toString(16).padStart(2, '0')).join('');
-}
+const rgbHex = (c) => c.map((v) => Math.max(0, Math.min(255, v | 0)).toString(16).padStart(2, '0')).join('').toUpperCase();
 
 // ------------------------------------------------------------------ helpers
 

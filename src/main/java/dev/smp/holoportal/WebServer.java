@@ -30,7 +30,8 @@ final class WebServer {
             "html", "text/html; charset=utf-8",
             "js", "text/javascript; charset=utf-8",
             "css", "text/css; charset=utf-8",
-            "svg", "image/svg+xml");
+            "svg", "image/svg+xml",
+            "json", "application/json; charset=utf-8");
     private static final Gson GSON = new Gson();
 
     private final HoloPortalPlugin plugin;
@@ -38,6 +39,7 @@ final class WebServer {
     private final HologramService holograms;
     private final DisplayEditor displays;
     private final AnimationEditor animations = new AnimationEditor();
+    private final HeadLibrary heads;
     private HttpServer server;
     private ExecutorService pool;
 
@@ -46,6 +48,7 @@ final class WebServer {
         this.auth = auth;
         this.holograms = holograms;
         this.displays = new DisplayEditor(plugin);
+        this.heads = new HeadLibrary(plugin);
     }
 
     void start(String bind, int port) throws IOException {
@@ -214,6 +217,16 @@ final class WebServer {
                     }
                 }
             }
+            case "heads" -> {
+                if (read && name == null) {
+                    Map<String, String> q = query(ex);
+                    if (!q.containsKey("cat") && !q.containsKey("q")) { json(ex, 200, heads.categories()); return; }
+                    int page = 0;
+                    try { page = Integer.parseInt(q.getOrDefault("page", "0")); } catch (NumberFormatException ignored) { }
+                    json(ex, 200, heads.search(q.get("cat"), q.get("q"), page));
+                    return;
+                }
+            }
             case "teleport" -> {
                 if (method.equals("POST")) {
                     JsonObject b = body(ex);
@@ -242,6 +255,18 @@ final class WebServer {
         ex.getResponseHeaders().add("Set-Cookie", COOKIE + "=" + token + "; Path=/; HttpOnly; SameSite=Strict");
     }
 
+    private static Map<String, String> query(HttpExchange ex) {
+        Map<String, String> out = new java.util.HashMap<>();
+        String raw = ex.getRequestURI().getRawQuery();
+        if (raw == null) return out;
+        for (String part : raw.split("&")) {
+            int eq = part.indexOf('=');
+            if (eq <= 0) continue;
+            out.put(URLDecoder.decode(part.substring(0, eq), StandardCharsets.UTF_8), URLDecoder.decode(part.substring(eq + 1), StandardCharsets.UTF_8));
+        }
+        return out;
+    }
+
     private static String cookie(HttpExchange ex) {
         String header = ex.getRequestHeaders().getFirst("Cookie");
         if (header == null) return null;
@@ -264,7 +289,7 @@ final class WebServer {
             ex.getResponseHeaders().set("Content-Type", TYPES.getOrDefault(ext, "application/octet-stream"));
             ex.getResponseHeaders().set("Cache-Control", "no-cache");
             ex.getResponseHeaders().set("Content-Security-Policy",
-                    "default-src 'self'; img-src 'self' data: https://mc-heads.net; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'");
+                    "default-src 'self'; img-src 'self' data: https://mc-heads.net https://assets.mcasset.cloud; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'");
             ex.sendResponseHeaders(200, data.length);
             try (OutputStream out = ex.getResponseBody()) {
                 out.write(data);

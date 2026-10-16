@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "dev.smp"
-version = "1.1.0"
+version = "1.3.0"
 
 // Pass -PmcVersion=26.3 to build against a different Paper API (setup.ps1 does this).
 val mcVersion = (findProperty("mcVersion") as String?) ?: "26.2"
